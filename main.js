@@ -202,6 +202,7 @@ function createWindow() {
     width: 1280,
     height: 800,
     backgroundColor: '#0f1014',
+    icon: path.join(__dirname, 'icon.png'), // ícone da janela/barra de tarefas (o instalador e o atalho usam build/icon.ico)
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
