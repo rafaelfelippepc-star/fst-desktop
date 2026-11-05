@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Compartilhar tela</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;display:flex;flex-direction:column;background:#0f1014;color:#e8e9ee;font-family:system-ui,sans-serif;user-select:none}
+  header{padding:16px 20px 0}
+  h1{margin:0 0 12px;font-size:18px}
+  .tabs{display:flex;gap:6px;border-bottom:1px solid #2a2c38}
+  .tab{padding:9px 14px;border:0;background:none;color:#9a9cab;font-size:14px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent}
+  .tab.on{color:#fff;border-bottom-color:#5865f2}
+  .hint{margin:12px 20px 0;color:#9a9cab;font-size:12.5px;line-height:1.5}
+  #grid{flex:1;overflow:auto;padding:14px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-content:start}
+  .item{background:#1a1b22;border:2px solid transparent;border-radius:10px;padding:8px;cursor:pointer;text-align:left;color:inherit;font:inherit}
+  .item:hover{border-color:#333646}
+  .item.sel{border-color:#5865f2;background:#20223a}
+  .thumb{width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:6px;display:block}
+  .name{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px}
+  .name img{width:16px;height:16px;flex:none}
+  .name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .empty{grid-column:1/-1;color:#9a9cab;text-align:center;padding:40px 0}
+  footer{display:flex;justify-content:flex-end;gap:10px;padding:12px 20px;border-top:1px solid #2a2c38}
+  button.b{padding:9px 18px;border:0;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer}
+  .cancel{background:#2a2c38;color:#e8e9ee}
+  .ok{background:#5865f2;color:#fff}
+  .ok:disabled{opacity:.4;cursor:default}
+</style>
+</head>
+<body>
+<header>
+  <h1>O que você quer compartilhar?</h1>
+  <div class="tabs">
+    <button class="tab on" data-kind="screen">Tela inteira</button>
+    <button class="tab" data-kind="window">Um programa (janela)</button>
+  </div>
+</header>
+<p class="hint" id="hint"></p>
+<div id="grid"></div>
+<footer>
+  <button class="b cancel" id="cancel">Cancelar</button>
+  <button class="b ok" id="ok" disabled>Compartilhar</button>
+</footer>
+<script>
+  const HINTS = {
+    screen: 'Mostra tudo o que aparece no monitor escolhido: todas as janelas, notificações e overlays.',
+    window: 'Mostra só o programa escolhido. Outras janelas e notificações do Windows não aparecem para a galera.',
+  };
+  let all = [], kind = 'screen', sel = null;
+  const grid = document.getElementById('grid'), ok = document.getElementById('ok');
+
+  function render() {
+    document.getElementById('hint').textContent = HINTS[kind];
+    grid.textContent = '';
+    const list = all.filter((s) => s.kind === kind);
+    if (!list.length) {
+      const d = document.createElement('div');
+      d.className = 'empty';
+      d.textContent = 'Nada encontrado.';
+      grid.append(d);
+    }
+    for (const s of list) {
+      const b = document.createElement('button');
+      b.className = 'item' + (s.id === sel ? ' sel' : '');
+      const t = document.createElement('img');
+      t.className = 'thumb';
+      t.src = s.thumb;
+      const n = document.createElement('div');
+      n.className = 'name';
+      if (s.icon) { const i = document.createElement('img'); i.src = s.icon; n.append(i); }
+      const sp = document.createElement('span');
+      sp.textContent = s.name;
+      sp.title = s.name;
+      n.append(sp);
+      b.append(t, n);
+      b.onclick = () => { sel = s.id; ok.disabled = false; render(); };
+      b.ondblclick = () => picker.choose(s.id);
+      grid.append(b);
+    }
+  }
+
+  document.querySelectorAll('.tab').forEach((t) => t.onclick = () => {
+    kind = t.dataset.kind; sel = null; ok.disabled = true;
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === t));
+    render();
+  });
+  ok.onclick = () => sel && picker.choose(sel);
+  document.getElementById('cancel').onclick = () => picker.cancel();
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') picker.cancel(); });
+
+  picker.sources().then((s) => {
+    all = s;
+    // se só há janelas ou o usuário prefere, o padrão continua "Tela inteira"
+    render();
+  });
+</script>
+</body>
+</html>

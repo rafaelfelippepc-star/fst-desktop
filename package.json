@@ -1,0 +1,33 @@
+{
+  "name": "fst-desktop",
+  "version": "1.0.0",
+  "description": "App desktop do FST: push to talk global (teclas e botões do mouse) mesmo com outro programa em foco",
+  "author": "FST",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node ptt-core.test.js",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.fst.desktop",
+    "productName": "FST",
+    "npmRebuild": false,
+    "directories": { "output": "dist" },
+    "files": ["**/*", "!dist/**", "!.github/**", "!*.md", "!*.test.js"],
+    "asarUnpack": ["node_modules/uiohook-napi/**"],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": true, "perMachine": false },
+    "publish": [
+      { "provider": "github", "owner": "rafaelfelippepc-star", "repo": "fst-desktop", "releaseType": "release" }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+name: Publicar versão
+
+# Roda quando você envia uma tag começando com "v" (ex.: v1.0.1).
+# Gera o instalador do Windows e publica na aba Releases; os apps instalados se atualizam sozinhos.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm test
+      - name: Usar o número da tag como versão do app
+        shell: bash
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+      - name: Gerar e publicar o instalador
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

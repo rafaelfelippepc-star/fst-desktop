@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>FST — endereço do servidor</title>
+<style>
+  body{margin:0;height:100vh;display:grid;place-items:center;background:#0f1014;color:#e8e9ee;font-family:system-ui,sans-serif}
+  form{width:min(440px,90vw);background:#1a1b22;padding:28px;border-radius:14px;display:grid;gap:12px}
+  h1{margin:0 0 4px;font-size:20px}
+  p{margin:0;color:#9a9cab;font-size:13px;line-height:1.5}
+  input{padding:10px 12px;border-radius:8px;border:1px solid #333646;background:#0f1014;color:inherit;font-size:14px}
+  button{padding:10px;border:0;border-radius:8px;background:#5865f2;color:#fff;font-weight:600;font-size:14px;cursor:pointer}
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>FST Desktop</h1>
+  <p>Cole o endereço do servidor. Quem hospeda usa <b>http://localhost:3000</b>; quem entra usa o link https que o host mandou (sem o <code>?sala=…</code>, se quiser).</p>
+  <p id="err" style="color:#ff7a7a" hidden></p>
+  <input id="url" placeholder="https://....trycloudflare.com" autofocus required>
+  <button>Conectar</button>
+</form>
+<script>
+  const erro = new URLSearchParams(location.search).get('erro');
+  if (erro) {
+    const e = document.getElementById('err');
+    e.hidden = false;
+    e.textContent = 'Não consegui conectar ao servidor (' + erro + '). O servidor fica no PC do host: confirme que ele está ligado e clique em Conectar para tentar de novo.';
+  }
+  resenhaConnect.current().then((u) => { if (u) document.getElementById('url').value = u; });
+  document.getElementById('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    let u = document.getElementById('url').value.trim();
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    resenhaConnect.save(u);
+  });
+</script>
+</body>
+</html>
