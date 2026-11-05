@@ -21,7 +21,11 @@ jobs:
       - run: npm test
       - name: Usar o número da tag como versão do app
         shell: bash
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+        run: |
+          VERSION="${GITHUB_REF_NAME#[vV]}"
+          VERSION="${VERSION#.}"
+          echo "Versão do app: $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Gerar e publicar o instalador
         run: npx electron-builder --win --publish always
         env:
