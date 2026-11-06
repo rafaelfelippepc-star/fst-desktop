@@ -130,47 +130,82 @@ ipcMain.on('server:save', (_e, url) => {
 /* ---------- atualização do app (GitHub Releases) ---------- */
 
 let updateReady = false;
+let readyVersion = '';
+let checking = false;
 const box = (message, detail) => {
   const opts = { type: 'info', buttons: ['OK'], title: 'FST Beta', message, detail };
   return win && !win.isDestroyed() ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
 };
+
+// Pergunta se a pessoa quer reiniciar para instalar a atualização que já foi baixada.
+async function promptRestart(version) {
+  const opts = {
+    type: 'info', buttons: ['Reiniciar agora', 'Depois'], defaultId: 1, cancelId: 1,
+    title: 'Atualização do FST Beta', message: `A versão ${version} do FST Beta foi baixada.`,
+    detail: 'Reiniciar instala agora (e tira você do canal de voz por alguns segundos). Se escolher "Depois", ela é instalada quando você fechar o FST Beta.',
+  };
+  const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  if (r.response === 0) autoUpdater.quitAndInstall();
+}
 
 function setupAutoUpdate() {
   if (!autoUpdater || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true; // se escolher "Depois", instala quando fechar o FST
   autoUpdater.on('error', (e) => console.warn('atualização:', e && e.message ? e.message : e));
-  autoUpdater.on('update-downloaded', async (info) => {
+  autoUpdater.on('update-downloaded', (info) => {
     updateReady = true;
+    readyVersion = info.version;
     buildMenu();
-    const opts = {
-      type: 'info', buttons: ['Reiniciar agora', 'Depois'], defaultId: 1, cancelId: 1,
-      title: 'Atualização do FST Beta', message: `A versão ${info.version} do FST Beta foi baixada.`,
-      detail: 'Reiniciar instala agora (e tira você do canal de voz por alguns segundos). Se escolher "Depois", ela é instalada quando você fechar o FST Beta.',
-    };
-    const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-    if (r.response === 0) autoUpdater.quitAndInstall();
+    promptRestart(info.version);
   });
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
   check();
   setInterval(check, 4 * 60 * 60 * 1000); // e de novo a cada 4 horas
 }
 
-async function manualCheck() {
-  if (!autoUpdater || !app.isPackaged) return box('A verificação de atualização só existe no app instalado (baixado do GitHub).');
+// Procura atualização agora. Devolve { state, version, message? }, com state:
+// 'dev' (app não instalado), 'ready' (já baixada), 'checking' (já procurando), 'available', 'none' ou 'error'.
+async function updateCheck() {
+  if (!autoUpdater || !app.isPackaged) return { state: 'dev', version: app.getVersion() };
+  if (updateReady) return { state: 'ready', version: readyVersion };
+  if (checking) return { state: 'checking', version: app.getVersion() };
+  checking = true;
   try {
     const r = await autoUpdater.checkForUpdates();
-    if (!r || !r.isUpdateAvailable) box('Você já está na versão mais recente.');
-    else box('Há uma versão nova. Ela está sendo baixada e você será avisado quando estiver pronta.');
+    return r && r.isUpdateAvailable
+      ? { state: 'available', version: r.updateInfo.version }
+      : { state: 'none', version: app.getVersion() };
   } catch (e) {
-    box('Não consegui verificar agora.', e && e.message ? e.message : String(e));
+    return { state: 'error', version: app.getVersion(), message: e && e.message ? e.message : String(e) };
+  } finally {
+    checking = false;
   }
 }
+
+// Item "Procurar atualizações" do menu de cima.
+async function manualCheck() {
+  const r = await updateCheck();
+  if (r.state === 'ready') return promptRestart(r.version);
+  if (r.state === 'dev') return box('A verificação de atualização só existe no app instalado (baixado do GitHub).');
+  if (r.state === 'checking') return box('Já estou procurando. Aguarde um instante.');
+  if (r.state === 'available') return box(`Há uma versão nova (${r.version}).`, 'Ela está sendo baixada e você será avisado quando estiver pronta.');
+  if (r.state === 'error') return box('Não consegui verificar agora.', r.message);
+  return box('Você já está na versão mais recente.', `Versão ${r.version}.`);
+}
+
+// Botão "Procurar atualizações" que fica dentro da página (configurações).
+ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('app:update-check', async () => {
+  const r = await updateCheck();
+  if (r.state === 'ready') promptRestart(r.version);
+  return r;
+});
 
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
-      label: 'FST Beta',
+      label: 'Menu',
       submenu: [
         { label: `FST Beta versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
         { label: 'Procurar atualizações', click: manualCheck },

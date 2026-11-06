@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('resenhaDesktop', {
   // Overlay do jogo (Steam, Shift+Tab) ao compartilhar um programa: cb('toggle' | 'escape')
   onOverlay: (cb) => ipcRenderer.on('overlay', (_e, k) => cb(k)),
   setOverlayGuard: (on) => ipcRenderer.send('overlay:guard', !!on),
+  // Atualização do app: o botão "Procurar atualizações" dentro da página usa estas duas
+  getVersion: () => ipcRenderer.invoke('app:version'),
+  checkUpdate: () => ipcRenderer.invoke('app:update-check'),
 });
 
 // usado só pela tela inicial (connect.html)
