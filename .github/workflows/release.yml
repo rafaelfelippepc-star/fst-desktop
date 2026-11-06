@@ -1,6 +1,6 @@
 name: Publicar versão
 
-# Roda quando você envia uma tag começando com "v" (ex.: v1.0.1).
+# Roda quando você envia uma tag começando com "v" (ex.: v1.0.25).
 # Gera o instalador do Windows e publica na aba Releases; os apps instalados se atualizam sozinhos.
 on:
   push:
@@ -27,19 +27,32 @@ jobs:
           VERSION="${VERSION#.}"
           echo "Versão do app: $VERSION"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-      - name: Gerar e publicar o instalador (tenta até 3 vezes se o envio falhar)
+      - name: Gerar o instalador (só gera, não publica)
         shell: bash
         run: |
-          for i in 1 2 3; do
-            echo "Tentativa $i de 3"
-            if npx electron-builder --win --publish always; then exit 0; fi
-            echo "Falhou; esperando 20 segundos para tentar de novo..."
-            sleep 20
+          npx electron-builder --win --publish never
+          echo "Arquivos gerados:"
+          ls -la dist
+          ls dist/*.exe >/dev/null || { echo "O instalador .exe não foi gerado"; exit 1; }
+          test -f dist/latest.yml || { echo "O latest.yml não foi gerado"; exit 1; }
+      - name: Enviar os arquivos para a Release (um por vez, com nova tentativa)
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "${TAG#[vV]}" --notes "$TAG"
+          for f in dist/*.exe dist/*.blockmap dist/latest.yml; do
+            [ -f "$f" ] || continue
+            ok=0
+            for i in 1 2 3; do
+              echo "Enviando $f (tentativa $i de 3)"
+              if gh release upload "$TAG" "$f" --clobber; then ok=1; break; fi
+              sleep 10
+            done
+            [ "$ok" = 1 ] || { echo "Não consegui enviar $f"; exit 1; }
           done
-          echo "Não consegui publicar depois de 3 tentativas."
-          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
       - name: Conferir se o .exe e o latest.yml chegaram na Release
         shell: bash
         run: |
