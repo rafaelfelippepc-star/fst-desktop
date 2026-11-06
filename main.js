@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, session, desktopCapturer, powerMonitor, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createPttCore } = require('./ptt-core');
@@ -209,6 +209,12 @@ function createWindow() {
       nodeIntegration: false,
       backgroundThrottling: false,
     },
+  });
+
+  // Links clicados no chat abrem no navegador do computador (e não numa janela nova do FST).
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
   });
 
   // A página foi recarregada ou trocada: o microfone da página antiga não existe mais,
