@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createPttCore } = require('./ptt-core');
@@ -117,6 +117,59 @@ ipcMain.handle('ptt:capture', () => core.captureNext());
 ipcMain.handle('system:idle', () => powerMonitor.getSystemIdleTime());
 ipcMain.handle('ptt:status', () => ({ ...hookStatus, platform: process.platform }));
 
+/* ---------- login lembrado (mesmo quando o link do túnel muda) ---------- */
+
+// O login da conta é um cookie, e cada link novo (trycloudflare.com) é um "site" novo, sem cookie.
+// Por isso o app guarda o login (criptografado pelo Windows) e o entrega a cada link novo do túnel.
+const LOGIN_COOKIE = 'fst_sid';
+const sessFile = () => path.join(app.getPath('userData'), 'session.bin');
+let savedSession = null; // { value, expires }
+function loadSavedSession() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return;
+    const s = JSON.parse(safeStorage.decryptString(fs.readFileSync(sessFile())));
+    if (s && typeof s.value === 'string' && s.value && (!s.expires || s.expires * 1000 > Date.now())) savedSession = s;
+  } catch {}
+}
+function persistSession(s) {
+  savedSession = s;
+  try {
+    if (!s) { fs.unlinkSync(sessFile()); return; }
+    if (safeStorage.isEncryptionAvailable()) fs.writeFileSync(sessFile(), safeStorage.encryptString(JSON.stringify(s)));
+  } catch {}
+}
+function watchLoginCookie() {
+  session.defaultSession.cookies.on('changed', (_e, cookie, cause, removed) => {
+    if (cookie.name !== LOGIN_COOKIE) return;
+    if (!removed) {
+      if (cookie.value) persistSession({ value: cookie.value, expires: cookie.expirationDate || 0 });
+    } else if (savedSession && cookie.value === savedSession.value && cause !== 'overwrite') {
+      persistSession(null); // saiu da conta (ou o login expirou)
+    }
+  });
+}
+// o login só é entregue a links de túnel (trycloudflare.com), nunca a um endereço qualquer
+const carriesLogin = (url) => { try { return /\.trycloudflare\.com$/i.test(new URL(url).hostname); } catch { return false; } };
+async function loadServer(url) {
+  try {
+    const jar = session.defaultSession.cookies;
+    const have = await jar.get({ url, name: LOGIN_COOKIE });
+    if (have.length && !savedSession) {
+      // quem já estava logado antes desta versão: guarda o login atual
+      persistSession({ value: have[0].value, expires: have[0].expirationDate || 0 });
+    } else if (savedSession && carriesLogin(url)) {
+      if (!have.length || have[0].value !== savedSession.value) {
+        await jar.set({
+          url, name: LOGIN_COOKIE, value: savedSession.value, path: '/', httpOnly: true, sameSite: 'lax',
+          secure: url.startsWith('https'),
+          ...(savedSession.expires ? { expirationDate: savedSession.expires } : {}),
+        });
+      }
+    }
+  } catch (e) { console.warn('login lembrado:', e && e.message ? e.message : e); }
+  if (win && !win.isDestroyed()) win.loadURL(url);
+}
+
 /* ---------- servidor e janela ---------- */
 
 ipcMain.handle('server:get', () => readServer() || defaultServer());
@@ -124,7 +177,7 @@ ipcMain.on('server:save', (_e, url) => {
   // se for o mesmo endereço padrão do app, não "trava" esse valor: assim, se o padrão mudar numa versão nova, a pessoa recebe junto
   if (url === defaultServer()) clearServer();
   else writeServer(url);
-  win.loadURL(url);
+  loadServer(url);
 });
 
 /* ---------- atualização do app (GitHub Releases) ---------- */
@@ -267,7 +320,7 @@ function createWindow() {
   });
 
   const url = process.env.FST_URL || process.env.RESENHA_URL || process.argv.find((a) => /^https?:\/\//.test(a)) || readServer() || defaultServer();
-  if (url) win.loadURL(url);
+  if (url) loadServer(url);
   else win.loadFile(path.join(__dirname, 'connect.html'));
 
   buildMenu();
@@ -353,6 +406,8 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   overlayLayout = readOverlayLayout();
+  loadSavedSession();
+  watchLoginCookie();
   createWindow();
   setupScreenShare();
   setupAutoUpdate();
