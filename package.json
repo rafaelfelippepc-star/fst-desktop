@@ -1,7 +1,7 @@
 {
   "name": "fst-desktop",
   "version": "1.0.0",
-  "description": "App desktop do FST: push to talk global (teclas e botões do mouse) mesmo com outro programa em foco",
+  "description": "App desktop do FST Beta: push to talk global (teclas e botões do mouse) mesmo com outro programa em foco",
   "author": "FST",
   "main": "main.js",
   "scripts": {
@@ -19,13 +19,13 @@
   },
   "build": {
     "appId": "com.fst.desktop",
-    "productName": "FST",
+    "productName": "FST Beta",
     "npmRebuild": false,
     "directories": { "output": "dist" },
     "files": ["**/*", "!dist/**", "!.github/**", "!*.md", "!*.test.js"],
     "asarUnpack": ["node_modules/uiohook-napi/**"],
     "win": { "target": "nsis", "icon": "build/icon.ico" },
-    "nsis": { "oneClick": true, "perMachine": false },
+    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "FST-Beta-Setup-${version}.${ext}" },
     "publish": [
       { "provider": "github", "owner": "rafaelfelippepc-star", "repo": "fst-desktop", "releaseType": "release" }
     ]

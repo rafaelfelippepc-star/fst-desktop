@@ -131,7 +131,7 @@ ipcMain.on('server:save', (_e, url) => {
 
 let updateReady = false;
 const box = (message, detail) => {
-  const opts = { type: 'info', buttons: ['OK'], title: 'FST', message, detail };
+  const opts = { type: 'info', buttons: ['OK'], title: 'FST Beta', message, detail };
   return win && !win.isDestroyed() ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
 };
 
@@ -145,8 +145,8 @@ function setupAutoUpdate() {
     buildMenu();
     const opts = {
       type: 'info', buttons: ['Reiniciar agora', 'Depois'], defaultId: 1, cancelId: 1,
-      title: 'Atualização do FST', message: `A versão ${info.version} do FST foi baixada.`,
-      detail: 'Reiniciar instala agora (e tira você do canal de voz por alguns segundos). Se escolher "Depois", ela é instalada quando você fechar o FST.',
+      title: 'Atualização do FST Beta', message: `A versão ${info.version} do FST Beta foi baixada.`,
+      detail: 'Reiniciar instala agora (e tira você do canal de voz por alguns segundos). Se escolher "Depois", ela é instalada quando você fechar o FST Beta.',
     };
     const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
     if (r.response === 0) autoUpdater.quitAndInstall();
@@ -170,9 +170,9 @@ async function manualCheck() {
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
-      label: 'FST',
+      label: 'FST Beta',
       submenu: [
-        { label: `FST versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
+        { label: `FST Beta versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
         { label: 'Procurar atualizações', click: manualCheck },
         { type: 'separator' },
         { label: 'Trocar servidor…', click: () => win.loadFile(path.join(__dirname, 'connect.html')) },
