@@ -12,6 +12,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,7 +27,25 @@ jobs:
           VERSION="${VERSION#.}"
           echo "Versão do app: $VERSION"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-      - name: Gerar e publicar o instalador
-        run: npx electron-builder --win --publish always
+      - name: Gerar e publicar o instalador (tenta até 3 vezes se o envio falhar)
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            echo "Tentativa $i de 3"
+            if npx electron-builder --win --publish always; then exit 0; fi
+            echo "Falhou; esperando 20 segundos para tentar de novo..."
+            sleep 20
+          done
+          echo "Não consegui publicar depois de 3 tentativas."
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Conferir se o .exe e o latest.yml chegaram na Release
+        shell: bash
+        run: |
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | tee assets.txt
+          grep -q '\.exe$' assets.txt || { echo "FALTOU o .exe na Release"; exit 1; }
+          grep -q 'latest.yml' assets.txt || { echo "FALTOU o latest.yml na Release"; exit 1; }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
