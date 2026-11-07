@@ -12,7 +12,9 @@
 //     a falta dos eventos de repetição da tecla segurada fecha o microfone sozinha.
 //  3. Trocar o atalho ou recarregar a página sempre fecha o microfone.
 
-const RELEASE_GRACE_MS = 250; // quanto tempo o mic continua aberto depois de soltar
+const RELEASE_GRACE_MS = 250; // padrão: quanto tempo o mic continua aberto depois de soltar (o usuário ajusta de 0 a 2000 ms)
+const MAX_RELEASE_DELAY_MS = 2000;
+const LINUX_MIN_GRACE_MS = 80; // no X11 a repetição da tecla vira pares soltar+apertar; abaixo disso o mic piscaria
 const BLIND_GUARD_MS = 2500; // sem NENHUM evento por tanto tempo com a tecla "segurada" = perdeu o keyup
 const GUARD_TICK_MS = 500;
 
@@ -33,6 +35,7 @@ function createPttCore({
   let guardTimer = null;
   let lastEvent = 0;
   let sawRepeat = false;
+  let releaseMs = RELEASE_GRACE_MS;
 
   const emit = (state) => {
     if (state === 'down') {
@@ -57,10 +60,12 @@ function createPttCore({
 
   function startGrace() {
     cancelGrace();
+    const ms = platform === 'linux' ? Math.max(releaseMs, LINUX_MIN_GRACE_MS) : releaseMs;
+    if (ms <= 0) return emit('up');
     graceTimer = timers.setTimeout(() => {
       graceTimer = null;
       emit('up');
-    }, RELEASE_GRACE_MS);
+    }, ms);
   }
 
   // Só no Windows e só para teclas: o teclado repete a tecla segurada várias vezes por
@@ -124,6 +129,12 @@ function createPttCore({
     binding = b && b.type ? { type: b.type, id: b.id, label: b.label } : null;
   }
 
+  // Atraso (ms) para fechar o microfone depois de soltar o atalho. Vale na próxima soltada.
+  function setReleaseDelay(ms) {
+    const n = Number(ms);
+    releaseMs = Number.isFinite(n) ? Math.min(MAX_RELEASE_DELAY_MS, Math.max(0, Math.round(n))) : RELEASE_GRACE_MS;
+  }
+
   function captureNext() {
     if (capture) capture(null); // havia outra captura pendente: cancela
     return new Promise((resolve) => {
@@ -136,7 +147,7 @@ function createPttCore({
     capture = null;
   }
 
-  return { onEvent, setBinding, captureNext, cancelCapture, reset, get binding() { return binding; } };
+  return { onEvent, setBinding, setReleaseDelay, captureNext, cancelCapture, reset, get binding() { return binding; } };
 }
 
-module.exports = { createPttCore, RELEASE_GRACE_MS, BLIND_GUARD_MS };
+module.exports = { createPttCore, RELEASE_GRACE_MS, BLIND_GUARD_MS, MAX_RELEASE_DELAY_MS, LINUX_MIN_GRACE_MS };

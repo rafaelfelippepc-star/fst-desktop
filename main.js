@@ -112,6 +112,7 @@ if (uIOhook) {
 // Importante: a página só recebe 'down'/'up' do atalho escolhido por ela.
 // As demais teclas digitadas no computador nunca são enviadas à página.
 ipcMain.on('ptt:set-binding', (_e, b) => core.setBinding(b));
+ipcMain.on('ptt:set-delay', (_e, ms) => core.setReleaseDelay(ms));
 ipcMain.handle('ptt:capture', () => core.captureNext());
 // segundos sem mexer no teclado/mouse no computador inteiro (usado para mandar para o AFK)
 ipcMain.handle('system:idle', () => powerMonitor.getSystemIdleTime());

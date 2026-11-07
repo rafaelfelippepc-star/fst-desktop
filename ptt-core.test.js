@@ -1,6 +1,6 @@
 // Teste da lógica do push to talk global. Rode com:  node ptt-core.test.js
 const assert = require('node:assert/strict');
-const { createPttCore, RELEASE_GRACE_MS, BLIND_GUARD_MS } = require('./ptt-core');
+const { createPttCore, RELEASE_GRACE_MS, BLIND_GUARD_MS, MAX_RELEASE_DELAY_MS, LINUX_MIN_GRACE_MS } = require('./ptt-core');
 
 const KEY_V = 47, KEY_ESC = 1, MOUSE_LEFT = 1, MOUSE_SIDE = 4;
 
@@ -205,6 +205,58 @@ test('durante a captura o atalho antigo não abre o mic', async () => {
   core.onEvent('key', KEY_V, true);
   assert.deepEqual(sent, []);
   assert.equal((await p).id, KEY_V);
+});
+
+test('atraso 0: fecha o mic no mesmo instante em que solta', () => {
+  const { core, sent } = make();
+  core.setReleaseDelay(0);
+  core.setBinding({ type: 'key', id: KEY_V, label: 'V' });
+  core.onEvent('key', KEY_V, true);
+  core.onEvent('key', KEY_V, false);
+  assert.deepEqual(sent, ['down', 'up']);
+});
+
+test('atraso maior (1000 ms) mantém o mic aberto até o fim do prazo', () => {
+  const { core, sent, advance } = make();
+  core.setReleaseDelay(1000);
+  core.setBinding({ type: 'key', id: KEY_V, label: 'V' });
+  core.onEvent('key', KEY_V, true);
+  core.onEvent('key', KEY_V, false);
+  advance(990);
+  assert.deepEqual(sent, ['down'], 'ainda dentro do atraso');
+  advance(20);
+  assert.deepEqual(sent, ['down', 'up']);
+});
+
+test('atraso é limitado a 0..2000 ms e valor inválido volta ao padrão', () => {
+  const a = make();
+  a.core.setReleaseDelay(99999);
+  a.core.setBinding({ type: 'key', id: KEY_V, label: 'V' });
+  a.core.onEvent('key', KEY_V, true);
+  a.core.onEvent('key', KEY_V, false);
+  a.advance(MAX_RELEASE_DELAY_MS - 10);
+  assert.deepEqual(a.sent, ['down']);
+  a.advance(20);
+  assert.deepEqual(a.sent, ['down', 'up']);
+  const b = make();
+  b.core.setReleaseDelay('abc');
+  b.core.setBinding({ type: 'key', id: KEY_V, label: 'V' });
+  b.core.onEvent('key', KEY_V, true);
+  b.core.onEvent('key', KEY_V, false);
+  b.advance(RELEASE_GRACE_MS + 10);
+  assert.deepEqual(b.sent, ['down', 'up']);
+});
+
+test('Linux: atraso 0 ainda respeita o mínimo, então a repetição não faz o mic piscar', () => {
+  const { core, sent, advance } = make('linux');
+  core.setReleaseDelay(0);
+  core.setBinding({ type: 'key', id: KEY_V, label: 'V' });
+  core.onEvent('key', KEY_V, true);
+  for (let i = 0; i < 15; i++) { advance(30); core.onEvent('key', KEY_V, false); core.onEvent('key', KEY_V, true); }
+  assert.deepEqual(sent, ['down']);
+  core.onEvent('key', KEY_V, false);
+  advance(LINUX_MIN_GRACE_MS + 5);
+  assert.deepEqual(sent, ['down', 'up']);
 });
 
 (async () => {
