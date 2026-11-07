@@ -390,7 +390,8 @@ ipcMain.on('app:update-install', () => { if (updateReady) installUpdate(); });
 /* ---------- novidades: o que mudou em cada versão (janela própria, não o Bloco de Notas) ---------- */
 
 // As notas vêm do novidades.json (vai dentro do instalador). Depois de atualizar, a janela abre sozinha com o que é
-// novo para a pessoa; no menu, "Novidades" abre quando quiser e "Ver registro das atualizações" abre a aba técnica.
+// novo para a pessoa; no menu, "Novidades" abre quando quiser; o registro técnico das atualizações fica na aba "Registro técnico" dessa mesma janela
+// (o aviso de erro de atualização em app.js manda a pessoa para "menu do app > Novidades > Registro técnico": se mudar, mude lá também).
 const NEWS_DELAY_MS = 6000; // espera o app terminar de abrir antes de mostrar a janela
 const seenFile = () => path.join(app.getPath('userData'), 'news-seen.json');
 const readSeen = () => {
@@ -466,7 +467,6 @@ function buildMenu() {
         { label: `FST Beta versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
         { label: 'Procurar atualizações', click: manualCheck },
         { label: 'Novidades (o que mudou)', click: () => openNews('news') },
-        { label: 'Ver registro das atualizações', click: () => openNews('log') }, // o texto "Ver registro das atualizações" aparece num aviso da página: não mude
         { type: 'separator' },
         { label: 'Trocar servidor…', click: () => win.loadFile(path.join(__dirname, 'connect.html')) },
         {
