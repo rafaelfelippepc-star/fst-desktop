@@ -21,7 +21,11 @@ contextBridge.exposeInMainWorld('resenhaDesktop', {
   setOverlayGuard: (on) => ipcRenderer.send('overlay:guard', !!on),
   // Atualização do app: o botão "Procurar atualizações" dentro da página usa estas duas
   getVersion: () => ipcRenderer.invoke('app:version'),
-  checkUpdate: () => ipcRenderer.invoke('app:update-check'),
+  // silent = true: não abre a janelinha "Reiniciar agora" (a página mostra o próprio botão)
+  checkUpdate: (silent) => ipcRenderer.invoke('app:update-check', { silent: !!silent }),
+  // andamento da atualização do app: cb({ state: 'downloading' | 'ready' | 'error', version, percent, message })
+  onUpdate: (cb) => ipcRenderer.on('app:update', (_e, s) => cb(s)),
+  installUpdate: () => ipcRenderer.send('app:update-install'),
 });
 
 // usado só pela tela inicial (connect.html)

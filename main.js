@@ -187,6 +187,28 @@ ipcMain.on('server:save', (_e, url) => {
 let updateReady = false;
 let readyVersion = '';
 let checking = false;
+
+// Registro das atualizações (pasta de dados do app, update.log): se a atualização falhar, o motivo fica aqui.
+const updLogFile = () => path.join(app.getPath('userData'), 'update.log');
+const updLog = (msg) => { try { fs.appendFileSync(updLogFile(), `[${new Date().toLocaleString('pt-BR')}] ${msg}\n`); } catch {} };
+// A página mostra o andamento na barra de cima: { state: 'downloading' | 'ready' | 'error', version?, percent?, message? }
+const sendUpdate = (s) => toPage('app:update', s);
+
+// Fecha o app DE VERDADE e roda o instalador da versão baixada, abrindo o app de novo no fim.
+function installUpdate() {
+  quitting = true; // com a bandeja ligada, o X só esconde a janela: aqui precisa fechar de verdade
+  updLog('instalando a atualização ' + readyVersion);
+  try { if (uIOhook) uIOhook.stop(); } catch {} // o gancho de teclado não pode segurar o processo aberto
+  try {
+    autoUpdater.quitAndInstall(true, true); // silencioso, e abre o FST Beta de novo quando terminar
+  } catch (e) {
+    updLog('falha ao instalar: ' + (e && e.message ? e.message : e));
+    quitting = false;
+    sendUpdate({ state: 'error', message: e && e.message ? e.message : String(e) });
+    return;
+  }
+  setTimeout(() => app.exit(0), 5000); // se o app não fechar sozinho, força (o instalador já foi iniciado)
+}
 // janela principal, só se estiver visível (um aviso preso a uma janela escondida na bandeja não apareceria)
 const visibleWin = () => (win && !win.isDestroyed() && win.isVisible() ? win : null);
 const box = (message, detail) => {
@@ -204,21 +226,31 @@ async function promptRestart(version) {
   };
   const w = visibleWin();
   const r = w ? await dialog.showMessageBox(w, opts) : await dialog.showMessageBox(opts);
-  if (r.response === 0) {
-    quitting = true; // instalar a atualização precisa fechar de verdade, mesmo com a bandeja ligada
-    autoUpdater.quitAndInstall();
-  }
+  if (r.response === 0) installUpdate();
 }
 
 function setupAutoUpdate() {
   if (!autoUpdater || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true; // se escolher "Depois", instala quando fechar o FST
-  autoUpdater.on('error', (e) => console.warn('atualização:', e && e.message ? e.message : e));
+  autoUpdater.on('error', (e) => {
+    const msg = e && e.message ? e.message : String(e);
+    console.warn('atualização:', msg);
+    updLog('erro: ' + msg);
+    sendUpdate({ state: 'error', message: msg });
+  });
+  autoUpdater.on('update-available', (info) => {
+    updLog('versão nova encontrada: ' + info.version + ' (baixando)');
+    sendUpdate({ state: 'downloading', version: info.version, percent: 0 });
+  });
+  autoUpdater.on('update-not-available', () => updLog('nenhuma versão nova'));
+  autoUpdater.on('download-progress', (p) => sendUpdate({ state: 'downloading', percent: Math.round(p.percent || 0) }));
   autoUpdater.on('update-downloaded', (info) => {
     updateReady = true;
     readyVersion = info.version;
+    updLog('versão ' + info.version + ' baixada e pronta');
     buildMenu();
+    sendUpdate({ state: 'ready', version: info.version });
     promptRestart(info.version);
   });
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
@@ -258,11 +290,13 @@ async function manualCheck() {
 
 // Botão "Procurar atualizações" que fica dentro da página (configurações).
 ipcMain.handle('app:version', () => app.getVersion());
-ipcMain.handle('app:update-check', async () => {
+ipcMain.handle('app:update-check', async (_e, opts) => {
   const r = await updateCheck();
-  if (r.state === 'ready') promptRestart(r.version);
+  if (r.state === 'ready' && !(opts && opts.silent)) promptRestart(r.version); // silent: a página mostra o próprio botão
   return r;
 });
+// botão "Reiniciar e instalar" da barra de cima da página
+ipcMain.on('app:update-install', () => { if (updateReady) installUpdate(); });
 
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -271,6 +305,13 @@ function buildMenu() {
       submenu: [
         { label: `FST Beta versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
         { label: 'Procurar atualizações', click: manualCheck },
+        {
+          label: 'Ver registro das atualizações',
+          click: () => {
+            try { if (!fs.existsSync(updLogFile())) fs.writeFileSync(updLogFile(), '(ainda sem registros)\n'); } catch {}
+            shell.openPath(updLogFile());
+          },
+        },
         { type: 'separator' },
         { label: 'Trocar servidor…', click: () => win.loadFile(path.join(__dirname, 'connect.html')) },
         {
