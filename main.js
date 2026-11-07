@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createPttCore } = require('./ptt-core');
@@ -176,6 +176,88 @@ async function loadServer(url) {
     }
   } catch (e) { console.warn('login lembrado:', e && e.message ? e.message : e); }
   if (win && !win.isDestroyed()) win.loadURL(url);
+}
+
+/* ---------- descoberta automática do link (gist) ---------- */
+
+// O PC do host (publicar-link.js) grava o link novo do túnel num gist público do GitHub.
+// Aqui o app lê esse gist ao abrir, quando o link salvo não responde e a cada poucos minutos.
+// O ID do gist vem em server-default.json ("gist"). Sem ele, nada disso acontece.
+const GIST_FILE = 'fst-link.json';
+const GIST_POLL_MS = 3 * 60 * 1000;
+const defaultGist = () => {
+  try {
+    const g = String(JSON.parse(fs.readFileSync(path.join(__dirname, 'server-default.json'), 'utf8')).gist || '').trim();
+    return /^[0-9a-f]{20,40}$/i.test(g) ? g : '';
+  } catch { return ''; }
+};
+// só links de túnel do Cloudflare são aceitos vindos do gist (api.trycloudflare.com é o serviço do cloudflared, não um túnel)
+const isTunnelUrl = (u) => {
+  try {
+    const x = new URL(u);
+    return x.protocol === 'https:' && /^[a-z0-9-]+\.trycloudflare\.com$/i.test(x.hostname) && x.hostname.toLowerCase() !== 'api.trycloudflare.com';
+  } catch { return false; }
+};
+const sameHost = (a, b) => { try { return new URL(a).host === new URL(b).host; } catch { return false; } };
+let gistEtag = '';
+let gistLast = ''; // último link válido lido do gist (devolvido quando o GitHub responde 304)
+let lastDiscovered = ''; // último link que o app já tratou, para o vigia só agir quando mudar
+let pinnedUrl = false; // abriu com link na linha de comando/variável de ambiente: não mexe
+
+// Devolve o link atual do gist ('' se não conseguiu ou se não há gist configurado).
+async function discoverServer() {
+  const id = defaultGist();
+  if (!id) return '';
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 4000);
+  try {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'FST-Desktop' };
+    if (gistEtag && gistLast) headers['If-None-Match'] = gistEtag;
+    const res = await net.fetch('https://api.github.com/gists/' + id, { headers, signal: ctl.signal });
+    if (res.status === 304) return gistLast;
+    if (!res.ok) throw new Error('o GitHub respondeu ' + res.status);
+    const data = await res.json();
+    const url = String(JSON.parse(data.files[GIST_FILE].content).url || '').trim().replace(/\/+$/, '');
+    if (!isTunnelUrl(url)) throw new Error('o gist não tem um link de túnel válido');
+    gistEtag = res.headers.get('etag') || '';
+    gistLast = url;
+    return url;
+  } catch (e) {
+    updLog('descoberta do link: ' + (e && e.message ? e.message : e));
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Endereço para abrir agora. Link salvo que NÃO é de túnel (localhost do host, link fixo...) sempre vale.
+// Se for de túnel (ou não houver nada), o do gist vence e fica salvo como último link conhecido.
+async function resolveStartUrl() {
+  const saved = readServer() || defaultServer();
+  if (saved && !isTunnelUrl(saved)) return saved;
+  const found = await discoverServer();
+  if (!found) return saved;
+  lastDiscovered = found;
+  if (saved && sameHost(saved, found)) return saved; // mesmo túnel: mantém (e o ?sala= que veio junto)
+  writeServer(found);
+  return found;
+}
+
+// Enquanto o app está aberto: se o host reiniciou o túnel, o gist muda e o app segue para o link novo.
+function watchServerLink() {
+  if (!defaultGist() || pinnedUrl) return;
+  setInterval(async () => {
+    const found = await discoverServer();
+    if (!found || found === lastDiscovered) return;
+    lastDiscovered = found;
+    if (!win || win.isDestroyed()) return;
+    const cur = win.webContents.getURL();
+    const onTunnel = isTunnelUrl(cur) || cur.startsWith('file:'); // 'file:' = tela de endereço/erro
+    if (!onTunnel || sameHost(cur, found)) return; // está no localhost do host ou já no link certo
+    updLog('link novo encontrado: ' + found);
+    writeServer(found);
+    loadServer(found);
+  }, GIST_POLL_MS);
 }
 
 /* ---------- servidor e janela ---------- */
@@ -433,14 +515,32 @@ function createWindow() {
   });
   win.webContents.on('did-finish-load', () => toPage('ptt:status', { ...hookStatus, platform: process.platform }));
   // Servidor fora do ar (o PC do host está desligado, link errado...): em vez de tela branca, mostra a tela de endereço com o aviso.
-  win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+  win.webContents.on('did-fail-load', async (_e, code, desc, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = carregamento cancelado (troca de página)
-    win.loadFile(path.join(__dirname, 'connect.html'), { query: { erro: desc || String(code) } });
+    // Se era um link de túnel, ele pode ter mudado: confere no gist antes de desistir.
+    if (!pinnedUrl && isTunnelUrl(failedUrl)) {
+      const found = await discoverServer();
+      if (found && !sameHost(found, failedUrl) && win && !win.isDestroyed()) {
+        lastDiscovered = found;
+        updLog('link antigo não respondeu; indo para o link novo: ' + found);
+        writeServer(found);
+        return loadServer(found);
+      }
+    }
+    if (win && !win.isDestroyed()) win.loadFile(path.join(__dirname, 'connect.html'), { query: { erro: desc || String(code) } });
   });
 
-  const url = process.env.FST_URL || process.env.RESENHA_URL || process.argv.find((a) => /^https?:\/\//.test(a)) || readServer() || defaultServer();
-  if (url) loadServer(url);
-  else win.loadFile(path.join(__dirname, 'connect.html'));
+  const explicit = process.env.FST_URL || process.env.RESENHA_URL || process.argv.find((a) => /^https?:\/\//.test(a));
+  pinnedUrl = !!explicit;
+  const openConnect = () => { if (win && !win.isDestroyed()) win.loadFile(path.join(__dirname, 'connect.html')); };
+  if (explicit) loadServer(explicit);
+  else {
+    resolveStartUrl().then((url) => {
+      if (!win || win.isDestroyed()) return;
+      if (url) loadServer(url);
+      else openConnect();
+    });
+  }
 
   buildMenu();
 }
@@ -528,6 +628,7 @@ app.whenReady().then(() => {
   syncTray();
   setupScreenShare();
   setupAutoUpdate();
+  watchServerLink();
   if (uIOhook) {
     try {
       uIOhook.start();
