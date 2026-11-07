@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createPttCore } = require('./ptt-core');
@@ -38,6 +38,7 @@ const defaultServer = () => {
 };
 
 let win;
+let quitting = false; // o app está mesmo saindo (e não só escondendo a janela na bandeja)
 
 /* ---------- push to talk global ---------- */
 
@@ -186,9 +187,12 @@ ipcMain.on('server:save', (_e, url) => {
 let updateReady = false;
 let readyVersion = '';
 let checking = false;
+// janela principal, só se estiver visível (um aviso preso a uma janela escondida na bandeja não apareceria)
+const visibleWin = () => (win && !win.isDestroyed() && win.isVisible() ? win : null);
 const box = (message, detail) => {
   const opts = { type: 'info', buttons: ['OK'], title: 'FST Beta', message, detail };
-  return win && !win.isDestroyed() ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
+  const w = visibleWin();
+  return w ? dialog.showMessageBox(w, opts) : dialog.showMessageBox(opts);
 };
 
 // Pergunta se a pessoa quer reiniciar para instalar a atualização que já foi baixada.
@@ -198,8 +202,12 @@ async function promptRestart(version) {
     title: 'Atualização do FST Beta', message: `A versão ${version} do FST Beta foi baixada.`,
     detail: 'Reiniciar instala agora (e tira você do canal de voz por alguns segundos). Se escolher "Depois", ela é instalada quando você fechar o FST Beta.',
   };
-  const r = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-  if (r.response === 0) autoUpdater.quitAndInstall();
+  const w = visibleWin();
+  const r = w ? await dialog.showMessageBox(w, opts) : await dialog.showMessageBox(opts);
+  if (r.response === 0) {
+    quitting = true; // instalar a atualização precisa fechar de verdade, mesmo com a bandeja ligada
+    autoUpdater.quitAndInstall();
+  }
 }
 
 function setupAutoUpdate() {
@@ -286,6 +294,52 @@ function setOverlayLayout(layout) {
   buildMenu();
 }
 
+/* ---------- bandeja do sistema (clicar no X minimiza em vez de fechar) ---------- */
+
+const trayFile = () => path.join(app.getPath('userData'), 'tray.json');
+const readTray = () => { try { return JSON.parse(fs.readFileSync(trayFile(), 'utf8')).on === true; } catch { return false; } };
+let trayOn = false; // padrão: desligado (o X fecha o app, como sempre foi)
+let tray = null;
+
+function showWin() {
+  if (!win || win.isDestroyed()) return createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function syncTray() {
+  if (trayOn && !tray) {
+    try {
+      const img = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 32, height: 32 });
+      if (img.isEmpty()) throw new Error('ícone não encontrado');
+      tray = new Tray(img);
+      tray.setToolTip('FST Beta');
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: 'Abrir o FST Beta', click: showWin },
+        { type: 'separator' },
+        { label: 'Sair', click: () => { quitting = true; app.quit(); } },
+      ]));
+      tray.on('click', showWin);
+    } catch (e) {
+      console.warn('bandeja:', e && e.message ? e.message : e);
+      tray = null;
+      trayOn = false; // sem o ícone não há como reabrir: não esconde a janela
+    }
+  } else if (!trayOn && tray) {
+    tray.destroy();
+    tray = null;
+    if (win && !win.isDestroyed() && !win.isVisible()) win.show();
+  }
+}
+ipcMain.handle('tray:get', () => trayOn);
+ipcMain.on('tray:set', (_e, on) => {
+  trayOn = !!on;
+  try { fs.writeFileSync(trayFile(), JSON.stringify({ on: trayOn })); } catch {}
+  syncTray();
+});
+app.on('before-quit', () => { quitting = true; });
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -298,6 +352,14 @@ function createWindow() {
       nodeIntegration: false,
       backgroundThrottling: false,
     },
+  });
+
+  // Com a bandeja ligada, o X só esconde a janela (a chamada e o push to talk continuam funcionando).
+  win.on('close', (e) => {
+    if (trayOn && tray && !quitting) {
+      e.preventDefault();
+      win.hide();
+    }
   });
 
   // Links clicados no chat abrem no navegador do computador (e não numa janela nova do FST).
@@ -399,17 +461,15 @@ function setupScreenShare() {
   });
 }
 
-app.on('second-instance', () => {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
-});
+app.on('second-instance', () => showWin()); // abrir o FST de novo traz de volta a janela escondida na bandeja
 
 app.whenReady().then(() => {
   overlayLayout = readOverlayLayout();
+  trayOn = readTray();
   loadSavedSession();
   watchLoginCookie();
   createWindow();
+  syncTray();
   setupScreenShare();
   setupAutoUpdate();
   if (uIOhook) {

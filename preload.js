@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('resenhaDesktop', {
   // { type: 'key'|'mouse', id, label } ou null
   setBinding: (b) => ipcRenderer.send('ptt:set-binding', b),
+  // bandeja do sistema: clicar no X minimiza em vez de fechar (a escolha fica neste computador)
+  getTray: () => ipcRenderer.invoke('tray:get'),
+  setTray: (on) => ipcRenderer.send('tray:set', !!on),
   // atraso (ms) para fechar o microfone depois de soltar o atalho (0 a 2000)
   setPttDelay: (ms) => ipcRenderer.send('ptt:set-delay', ms),
   // espera a próxima tecla/botão apertado em qualquer lugar do sistema
