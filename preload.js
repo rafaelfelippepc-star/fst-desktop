@@ -6,6 +6,10 @@ contextBridge.exposeInMainWorld('resenhaDesktop', {
   // bandeja do sistema: clicar no X minimiza em vez de fechar (a escolha fica neste computador)
   getTray: () => ipcRenderer.invoke('tray:get'),
   setTray: (on) => ipcRenderer.send('tray:set', !!on),
+  // aceleração de hardware (GPU): a escolha só vale depois de reiniciar o app
+  getHwAccel: () => ipcRenderer.invoke('hw:get'),
+  setHwAccel: (on) => ipcRenderer.send('hw:set', !!on),
+  relaunch: () => ipcRenderer.send('app:relaunch'),
   // atraso (ms) para fechar o microfone depois de soltar o atalho (0 a 2000)
   setPttDelay: (ms) => ipcRenderer.send('ptt:set-delay', ms),
   // espera a próxima tecla/botão apertado em qualquer lugar do sistema

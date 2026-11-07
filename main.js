@@ -18,6 +18,12 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
+// Aceleração de hardware (GPU): ligada por padrão. Se a pessoa desligar nas configurações, a escolha fica
+// salva aqui e vale na próxima vez que o app abrir (o Electron só aceita mudar isso antes de iniciar).
+const hwFile = () => path.join(app.getPath('userData'), 'hwaccel.json');
+const readHw = () => { try { return JSON.parse(fs.readFileSync(hwFile(), 'utf8')).on !== false; } catch { return true; } };
+if (!readHw()) app.disableHardwareAcceleration();
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
@@ -373,6 +379,15 @@ function syncTray() {
     if (win && !win.isDestroyed() && !win.isVisible()) win.show();
   }
 }
+ipcMain.handle('hw:get', () => readHw());
+ipcMain.on('hw:set', (_e, on) => { try { fs.writeFileSync(hwFile(), JSON.stringify({ on: !!on })); } catch {} });
+// reinicia o app para a escolha da aceleração de hardware valer
+ipcMain.on('app:relaunch', () => {
+  quitting = true; // com a bandeja ligada, o X só esconde a janela: aqui precisa fechar de verdade
+  try { if (uIOhook) uIOhook.stop(); } catch {}
+  app.relaunch();
+  app.exit(0);
+});
 ipcMain.handle('tray:get', () => trayOn);
 ipcMain.on('tray:set', (_e, on) => {
   trayOn = !!on;
