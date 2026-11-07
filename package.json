@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node ptt-core.test.js && node news-core.test.js",
+    "test": "node ptt-core.test.js && node news-core.test.js && node trust-core.test.js",
     "dist": "electron-builder --win"
   },
   "dependencies": {

@@ -1,7 +1,9 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage, net, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { fileURLToPath } = require('url');
 const { createPttCore } = require('./ptt-core');
+const { createTrust, isTunnelUrl, permissionAllowed } = require('./trust-core');
 const { cleanNews, pickUnseen, tailText, parseVer, cmpVer } = require('./news-core');
 
 // Atualização automática pelo GitHub (só no app instalado, não no "npm start").
@@ -47,6 +49,43 @@ const defaultServer = () => {
 let win;
 let quitting = false; // o app está mesmo saindo (e não só escondendo a janela na bandeja)
 
+/* ---------- em quem o app confia (login, ferramentas do desktop, microfone) ---------- */
+
+// "Servidor do FST" = o link que o GITHUB (gist) disse, o link padrão do app (server-default.json), o link aberto
+// pela linha de comando (FST_URL / argumento) e o localhost do host. Qualquer outro endereço, como um link digitado em
+// "Trocar servidor", abre como um site comum: sem login lembrado, sem as funções do desktop (push to talk global,
+// bandeja, atualização...) e sem microfone nem tela. Quem tem um túnel trycloudflare.com consegue criar qualquer link.
+// A regra fica em trust-core.js (com testes).
+const trustFile = () => path.join(app.getPath('userData'), 'trusted-link.json');
+const trust = createTrust({
+  load: () => { try { return String(JSON.parse(fs.readFileSync(trustFile(), 'utf8')).origin || ''); } catch { return ''; } },
+  save: (origin) => { try { fs.writeFileSync(trustFile(), JSON.stringify({ origin })); } catch {} },
+  defaultUrl: defaultServer,
+});
+
+const frameUrlOf = (e) => { try { return e.senderFrame ? e.senderFrame.url : ''; } catch { return ''; } };
+// Quem pediu é a página PRINCIPAL da janela do app (não um iframe nem outra janela) e ela é do servidor do FST?
+function fromServerPage(e) {
+  try {
+    const wc = win && !win.isDestroyed() ? win.webContents : null;
+    const f = e.senderFrame;
+    return !!wc && !!f && e.sender === wc && !f.parent && trust.isTrusted(f.url);
+  } catch { return false; }
+}
+// Quem pediu é uma tela do próprio app (connect.html, novidades.html, picker.html) dentro da janela `wc`?
+const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+function fromOwnPage(e, wc, file) {
+  try {
+    const f = e.senderFrame;
+    if (!wc || wc.isDestroyed() || !f || e.sender !== wc || f.parent) return false;
+    const u = new URL(f.url);
+    return u.protocol === 'file:' && samePath(path.normalize(fileURLToPath(u)), path.normalize(path.join(__dirname, file)));
+  } catch { return false; }
+}
+// ipcMain.handle / ipcMain.on que só respondem à página do servidor (o resto recebe a resposta "vazia")
+const handleServer = (channel, fn, fallback) => ipcMain.handle(channel, (e, ...a) => (fromServerPage(e) ? fn(e, ...a) : (typeof fallback === 'function' ? fallback() : fallback)));
+const onServer = (channel, fn) => ipcMain.on(channel, (e, ...a) => { if (fromServerPage(e)) fn(e, ...a); });
+
 /* ---------- push to talk global ---------- */
 
 // Carrega o hook de teclado/mouse. Se falhar (módulo nativo ausente, sem permissão...),
@@ -71,8 +110,9 @@ const keyName = (code) => {
   return hit ? KEY_LABELS[hit[0]] || hit[0] : `Tecla ${code}`;
 };
 
+// Só a página do servidor do FST recebe os avisos do app (atalho apertado, atualização...); um site qualquer não.
 const toPage = (channel, payload) => {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  if (win && !win.isDestroyed() && trust.isTrusted(win.webContents.getURL())) win.webContents.send(channel, payload);
 };
 
 const core = createPttCore({
@@ -108,7 +148,7 @@ function overlayKey(code, isDown) {
   if (code === overlayCode()) toPage('overlay', 'toggle');
   else if (code === UiohookKey.Escape) toPage('overlay', 'escape');
 }
-ipcMain.on('overlay:guard', (_e, on) => { overlayGuard = !!on; });
+onServer('overlay:guard', (_e, on) => { overlayGuard = !!on; });
 
 if (uIOhook) {
   uIOhook.on('keydown', (e) => { core.onEvent('key', e.keycode, true); overlayKey(e.keycode, true); });
@@ -119,12 +159,20 @@ if (uIOhook) {
 
 // Importante: a página só recebe 'down'/'up' do atalho escolhido por ela.
 // As demais teclas digitadas no computador nunca são enviadas à página.
-ipcMain.on('ptt:set-binding', (_e, b) => core.setBinding(b));
-ipcMain.on('ptt:set-delay', (_e, ms) => core.setReleaseDelay(ms));
-ipcMain.handle('ptt:capture', () => core.captureNext());
+onServer('ptt:set-binding', (_e, b) => core.setBinding(b));
+onServer('ptt:set-delay', (_e, ms) => core.setReleaseDelay(ms));
+// Captura da próxima tecla/botão (para escolher o atalho). Só com a janela do FST em foco, por no máximo 15 s e
+// uma tecla por vez: sem isso, chamar isto em loop viraria um registrador de teclas do computador inteiro.
+const CAPTURE_MAX_MS = 15000;
+handleServer('ptt:capture', () => {
+  if (!win || win.isDestroyed() || !win.isFocused()) return null;
+  const timer = setTimeout(() => core.cancelCapture(), CAPTURE_MAX_MS);
+  return core.captureNext().finally(() => clearTimeout(timer));
+}, null);
 // segundos sem mexer no teclado/mouse no computador inteiro (usado para mandar para o AFK)
-ipcMain.handle('system:idle', () => powerMonitor.getSystemIdleTime());
-ipcMain.handle('ptt:status', () => ({ ...hookStatus, platform: process.platform }));
+handleServer('system:idle', () => powerMonitor.getSystemIdleTime(), 0);
+handleServer('ptt:status', () => ({ ...hookStatus, platform: process.platform }),
+  () => ({ ok: false, error: 'esta página não é o servidor do FST: o atalho global só funciona no link do servidor', platform: process.platform }));
 
 /* ---------- login lembrado (mesmo quando o link do túnel muda) ---------- */
 
@@ -150,6 +198,7 @@ function persistSession(s) {
 function watchLoginCookie() {
   session.defaultSession.cookies.on('changed', (_e, cookie, cause, removed) => {
     if (cookie.name !== LOGIN_COOKIE) return;
+    if (!trust.mayStoreLoginFrom(cookie.domain)) return; // cookie de um site qualquer não troca o login guardado
     if (!removed) {
       if (cookie.value) persistSession({ value: cookie.value, expires: cookie.expirationDate || 0 });
     } else if (savedSession && cookie.value === savedSession.value && cause !== 'overwrite') {
@@ -157,13 +206,15 @@ function watchLoginCookie() {
     }
   });
 }
-// o login só é entregue a links de túnel (trycloudflare.com), nunca a um endereço qualquer
-const carriesLogin = (url) => { try { return /\.trycloudflare\.com$/i.test(new URL(url).hostname); } catch { return false; } };
+// O login só é entregue ao link do servidor que veio do gist (ou ao padrão do app), nunca a um link digitado:
+// qualquer pessoa consegue abrir um túnel trycloudflare.com e, com o login (cookie de 30 dias), entraria na conta.
+const carriesLogin = (url) => trust.carriesLogin(url);
 async function loadServer(url) {
   try {
     const jar = session.defaultSession.cookies;
     const have = await jar.get({ url, name: LOGIN_COOKIE });
-    if (have.length && !savedSession) {
+    const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+    if (have.length && !savedSession && trust.mayStoreLoginFrom(host)) {
       // quem já estava logado antes desta versão: guarda o login atual
       persistSession({ value: have[0].value, expires: have[0].expirationDate || 0 });
     } else if (savedSession && carriesLogin(url)) {
@@ -192,13 +243,6 @@ const defaultGist = () => {
     return /^[0-9a-f]{20,40}$/i.test(g) ? g : '';
   } catch { return ''; }
 };
-// só links de túnel do Cloudflare são aceitos vindos do gist (api.trycloudflare.com é o serviço do cloudflared, não um túnel)
-const isTunnelUrl = (u) => {
-  try {
-    const x = new URL(u);
-    return x.protocol === 'https:' && /^[a-z0-9-]+\.trycloudflare\.com$/i.test(x.hostname) && x.hostname.toLowerCase() !== 'api.trycloudflare.com';
-  } catch { return false; }
-};
 const sameHost = (a, b) => { try { return new URL(a).host === new URL(b).host; } catch { return false; } };
 let gistEtag = '';
 let gistLast = ''; // último link válido lido do gist (devolvido quando o GitHub responde 304)
@@ -220,6 +264,7 @@ async function discoverServer() {
     const data = await res.json();
     const url = String(JSON.parse(data.files[GIST_FILE].content).url || '').trim().replace(/\/+$/, '');
     if (!isTunnelUrl(url)) throw new Error('o gist não tem um link de túnel válido');
+    trust.trustGist(url); // veio do GitHub: este é o link do servidor
     gistEtag = res.headers.get('etag') || '';
     gistLast = url;
     return url;
@@ -263,12 +308,23 @@ function watchServerLink() {
 
 /* ---------- servidor e janela ---------- */
 
-ipcMain.handle('server:get', () => readServer() || defaultServer());
-ipcMain.on('server:save', (_e, url) => {
+const fromConnectPage = (e) => fromOwnPage(e, win && win.webContents, 'connect.html');
+ipcMain.handle('server:get', (e) => (fromConnectPage(e) ? readServer() || defaultServer() : ''));
+ipcMain.on('server:save', (e, url) => {
+  if (!fromConnectPage(e)) return;
+  url = String(url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return;
   // se for o mesmo endereço padrão do app, não "trava" esse valor: assim, se o padrão mudar numa versão nova, a pessoa recebe junto
   if (url === defaultServer()) clearServer();
   else writeServer(url);
   loadServer(url);
+  if (!trust.isTrusted(url)) {
+    // endereço digitado à mão que não é o do servidor do FST: abre, mas só como um site comum
+    dialog.showMessageBox(visibleWin() || undefined, {
+      type: 'warning', buttons: ['OK'], title: 'FST Beta', message: 'Este endereço não é o do servidor do FST.',
+      detail: 'Ele abre só como um site comum: sem login lembrado, sem push to talk global, sem microfone e sem tela. O app acha o link certo sozinho; use "Trocar servidor" só se o host pediu.',
+    }).catch(() => {});
+  }
 });
 
 /* ---------- atualização do app (GitHub Releases) ---------- */
@@ -378,14 +434,14 @@ async function manualCheck() {
 }
 
 // Botão "Procurar atualizações" que fica dentro da página (configurações).
-ipcMain.handle('app:version', () => app.getVersion());
-ipcMain.handle('app:update-check', async (_e, opts) => {
+handleServer('app:version', () => app.getVersion(), '');
+handleServer('app:update-check', async (_e, opts) => {
   const r = await updateCheck();
   if (r.state === 'ready' && !(opts && opts.silent)) promptRestart(r.version); // silent: a página mostra o próprio botão
   return r;
-});
+}, { state: 'dev', version: '' });
 // botão "Reiniciar e instalar" da barra de cima da página
-ipcMain.on('app:update-install', () => { if (updateReady) installUpdate(); });
+onServer('app:update-install', () => { if (updateReady) installUpdate(); });
 
 /* ---------- novidades: o que mudou em cada versão (janela própria, não o Bloco de Notas) ---------- */
 
@@ -446,18 +502,21 @@ function initNews() {
   if (newsUnseen.length && app.isPackaged) setTimeout(() => openNews('news'), NEWS_DELAY_MS);
 }
 
-ipcMain.handle('news:get', () => {
+const fromNewsPage = (e) => fromOwnPage(e, newsWin && newsWin.webContents, 'novidades.html');
+ipcMain.handle('news:get', (e) => {
+  if (!fromNewsPage(e)) return { current: '', entries: [], unseen: [] };
   const current = app.getVersion();
   const all = loadNews();
   // no app instalado, nunca mostra versão que a pessoa ainda não tem (sem spoiler); em teste (npm start) mostra tudo
   const entries = app.isPackaged ? all.filter((e) => cmpVer(e.version, current) <= 0) : all;
   return { current, entries, unseen: newsUnseen };
 });
-ipcMain.handle('news:log', () => {
+ipcMain.handle('news:log', (e) => {
+  if (!fromNewsPage(e)) return '';
   try { return tailText(fs.readFileSync(updLogFile(), 'utf8')); } catch { return ''; }
 });
-ipcMain.on('news:copy', (_e, text) => { try { clipboard.writeText(String(text || '').slice(0, 200000)); } catch {} });
-ipcMain.on('news:close', () => { if (newsWin && !newsWin.isDestroyed()) newsWin.close(); });
+ipcMain.on('news:copy', (e, text) => { if (!fromNewsPage(e)) return; try { clipboard.writeText(String(text || '').slice(0, 200000)); } catch {} });
+ipcMain.on('news:close', (e) => { if (fromNewsPage(e) && newsWin && !newsWin.isDestroyed()) newsWin.close(); });
 
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -528,17 +587,17 @@ function syncTray() {
     if (win && !win.isDestroyed() && !win.isVisible()) win.show();
   }
 }
-ipcMain.handle('hw:get', () => readHw());
-ipcMain.on('hw:set', (_e, on) => { try { fs.writeFileSync(hwFile(), JSON.stringify({ on: !!on })); } catch {} });
+handleServer('hw:get', () => readHw(), true);
+onServer('hw:set', (_e, on) => { try { fs.writeFileSync(hwFile(), JSON.stringify({ on: !!on })); } catch {} });
 // reinicia o app para a escolha da aceleração de hardware valer
-ipcMain.on('app:relaunch', () => {
+onServer('app:relaunch', () => {
   quitting = true; // com a bandeja ligada, o X só esconde a janela: aqui precisa fechar de verdade
   try { if (uIOhook) uIOhook.stop(); } catch {}
   app.relaunch();
   app.exit(0);
 });
-ipcMain.handle('tray:get', () => trayOn);
-ipcMain.on('tray:set', (_e, on) => {
+handleServer('tray:get', () => trayOn, false);
+onServer('tray:set', (_e, on) => {
   trayOn = !!on;
   try { fs.writeFileSync(trayFile(), JSON.stringify({ on: trayOn })); } catch {}
   syncTray();
@@ -583,6 +642,7 @@ function createWindow() {
     core.cancelCapture();
     core.reset({ notify: false });
   });
+  win.on('blur', () => core.cancelCapture()); // saiu do FST: ninguém fica "escutando" a próxima tecla
   win.webContents.on('did-finish-load', () => toPage('ptt:status', { ...hookStatus, platform: process.platform }));
   // Servidor fora do ar (o PC do host está desligado, link errado...): em vez de tela branca, mostra a tela de endereço com o aviso.
   win.webContents.on('did-fail-load', async (_e, code, desc, failedUrl, isMainFrame) => {
@@ -603,7 +663,7 @@ function createWindow() {
   const explicit = process.env.FST_URL || process.env.RESENHA_URL || process.argv.find((a) => /^https?:\/\//.test(a));
   pinnedUrl = !!explicit;
   const openConnect = () => { if (win && !win.isDestroyed()) win.loadFile(path.join(__dirname, 'connect.html')); };
-  if (explicit) loadServer(explicit);
+  if (explicit) { trust.pin(explicit); loadServer(explicit); }
   else {
     resolveStartUrl().then((url) => {
       if (!win || win.isDestroyed()) return;
@@ -637,8 +697,10 @@ async function listSources() {
   }));
 }
 
-ipcMain.handle('picker:sources', () => listSources());
-ipcMain.on('picker:choose', (_e, id) => {
+const fromPickerPage = (e) => fromOwnPage(e, pickerWin && pickerWin.webContents, 'picker.html');
+ipcMain.handle('picker:sources', (e) => (fromPickerPage(e) ? listSources() : []));
+ipcMain.on('picker:choose', (e, id) => {
+  if (!fromPickerPage(e)) return;
   const done = pickerDone;
   pickerDone = null;
   if (done) done(id || null);
@@ -665,6 +727,22 @@ function askWhatToShare() {
   });
 }
 
+// Microfone, tela, som... só para a página do servidor do FST (nunca para um site qualquer nem para um iframe).
+// Sem isto o Chromium libera tudo para qualquer endereço carregado no app.
+function setupPermissions() {
+  const ses = session.defaultSession;
+  const topUrl = (wc) => { try { return wc ? wc.getURL() : ''; } catch { return ''; } };
+  const mine = (wc) => !!wc && !!win && !win.isDestroyed() && wc === win.webContents;
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    let ok = false;
+    try { ok = mine(wc) && permissionAllowed(trust, permission, topUrl(wc), (details && details.requestingUrl) || ''); } catch {}
+    callback(ok);
+  });
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    try { return mine(wc) && permissionAllowed(trust, permission, topUrl(wc), (details && details.requestingUrl) || requestingOrigin || ''); } catch { return false; }
+  });
+}
+
 function setupScreenShare() {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     // Cancelar: as versões novas do Electron lançam erro com callback({}); tenta as formas aceitas.
@@ -674,6 +752,9 @@ function setupScreenShare() {
       }
     };
     try {
+      // só a página do servidor do FST pode pedir para compartilhar a tela
+      const asker = (request.frame && request.frame.url) || (win && !win.isDestroyed() ? win.webContents.getURL() : '');
+      if (!trust.isTrusted(asker)) return cancel();
       const id = await askWhatToShare();
       const src = id && pickerList.find((s) => s.id === id);
       if (!src) { overlayGuard = false; return cancel(); }
@@ -693,6 +774,10 @@ app.whenReady().then(() => {
   initNews();
   overlayLayout = readOverlayLayout();
   trayOn = readTray();
+  // Quem já usava o app antes desta versão tem o link salvo (que o próprio app gravou ou que a pessoa digitou na época):
+  // ele continua valendo até o gist dizer outro, para o app não parar de funcionar se o GitHub estiver fora do ar.
+  if (!fs.existsSync(trustFile())) { const saved = readServer(); if (isTunnelUrl(saved)) trust.trustGist(saved); }
+  setupPermissions();
   loadSavedSession();
   watchLoginCookie();
   createWindow();

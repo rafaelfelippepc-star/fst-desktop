@@ -44,6 +44,8 @@ Configuração (uma vez):
 
 Quem entra **pelo navegador** continua precisando receber o link. O app só segue links `https://....trycloudflare.com`; o host, que usa `http://localhost:3000`, nunca é redirecionado.
 
+**Segurança do app desktop:** qualquer pessoa consegue abrir um túnel `trycloudflare.com`, então o app só confia no **link que veio do gist**, no link padrão do app (`server-default.json`), no link aberto pela linha de comando (`FST-Desktop.bat https://...`) e no `localhost` do host. Só nesses endereços o app entrega o login lembrado, libera o microfone e a tela, e responde às funções do desktop (push to talk global, bandeja, atualização, aceleração de hardware). Um endereço digitado em **Trocar servidor** abre só como um site comum (e o app avisa). Se você usa um **link fixo** (por exemplo Tailscale), coloque-o em `"url"` no `server-default.json` e publique uma versão nova do app. Para escolher a tecla do push to talk, o FST precisa estar em foco (a escolha espera até 15 segundos). As regras ficam em `desktop/trust-core.js`, com testes (`cd desktop && npm test`).
+
 
 ## Canais
 
