@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { createPttCore } = require('./ptt-core');
-const { createTrust, isTunnelUrl, permissionAllowed } = require('./trust-core');
+const { createTrust, isTunnelUrl, permissionAllowed, navigationAllowed, originOf } = require('./trust-core');
 const { cleanNews, pickUnseen, tailText, parseVer, cmpVer } = require('./news-core');
 
 // Atualização automática pelo GitHub (só no app instalado, não no "npm start").
@@ -604,6 +604,33 @@ onServer('tray:set', (_e, on) => {
 });
 app.on('before-quit', () => { quitting = true; });
 
+// A janela NÃO navega sozinha para outro site: um clique em link sem target, um redirecionamento ou um script da
+// página (de um servidor comprometido, por exemplo) não consegue levar o app para fora do endereço em que está.
+// Só o próprio app troca de página (loadURL/loadFile, que não passam por aqui). Links do chat continuam abrindo
+// no navegador do computador (setWindowOpenHandler). O que for barrado fica no Registro técnico (só o endereço).
+let lastBlockedNav = '';
+function guardNavigation(wc) {
+  const urlOf = (d, u) => String((d && d.url) || u || ''); // o Electron novo manda o endereço no evento; o antigo, como argumento
+  const block = (e, url, what) => {
+    e.preventDefault();
+    const where = originOf(url) || String(url).split(':')[0] + ':';
+    if (where !== lastBlockedNav) { lastBlockedNav = where; updLog(`${what} bloqueado: ${where}`); }
+  };
+  wc.on('will-navigate', (e, u) => {
+    const url = urlOf(e, u);
+    if (!navigationAllowed(wc.getURL(), url)) block(e, url, 'navegação');
+  });
+  // Redirecionamento: confere só quando a página aberta é um site. Saindo de uma página do app (tela de endereço
+  // ou de erro), quem escolheu o endereço foi a própria pessoa, e o site dela pode redirecionar normalmente.
+  wc.on('will-redirect', (e, u) => {
+    const url = urlOf(e, u);
+    const cur = wc.getURL();
+    if (originOf(cur) && !navigationAllowed(cur, url)) block(e, url, 'redirecionamento');
+  });
+}
+// Nenhuma janela do app aceita <webview> (nem a página do servidor): seria outro jeito de embutir um site.
+app.on('web-contents-created', (_e, contents) => contents.on('will-attach-webview', (ev) => ev.preventDefault()));
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -617,6 +644,8 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+
+  guardNavigation(win.webContents);
 
   // Fechar a janela principal de verdade fecha também a de Novidades (senão ela segurava o app aberto).
   win.on('closed', () => { if (newsWin && !newsWin.isDestroyed()) newsWin.close(); });
@@ -718,6 +747,8 @@ function askWhatToShare() {
       webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, nodeIntegration: false },
     });
     pickerWin.removeMenu();
+    pickerWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    pickerWin.webContents.on('will-navigate', (e) => e.preventDefault());
     pickerWin.once('ready-to-show', () => pickerWin.show());
     pickerWin.on('closed', () => {
       pickerWin = null;

@@ -86,4 +86,15 @@ function permissionAllowed(trust, permission, topUrl, requestingUrl) {
   return TOP_PAGE_MAY_DELEGATE.has(permission);
 }
 
-module.exports = { createTrust, isTunnelUrl, isTunnelHost, isLoopbackUrl, originOf, permissionAllowed };
+// A janela do app nunca deve ir sozinha para outro site (link sem target, redirecionamento, script da página).
+// Quando a página (clique, redirecionamento, script) pede para navegar, só vale ficar no MESMO endereço (origem) da
+// página aberta, ou recarregar a mesma página. Quem troca de página de verdade é o próprio app (loadURL/loadFile),
+// que não passa por esta conferência. Páginas do app (file:) não navegam sozinhas para lugar nenhum.
+function navigationAllowed(currentUrl, targetUrl) {
+  const noHash = (u) => String(u == null ? '' : u).split('#')[0];
+  if (noHash(currentUrl) && noHash(currentUrl) === noHash(targetUrl)) return true;
+  const a = originOf(currentUrl);
+  return !!a && a === originOf(targetUrl);
+}
+
+module.exports = { createTrust, isTunnelUrl, isTunnelHost, isLoopbackUrl, originOf, permissionAllowed, navigationAllowed };

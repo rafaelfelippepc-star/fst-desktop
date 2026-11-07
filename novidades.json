@@ -2,6 +2,16 @@
   "_ajuda": "ANTES de criar a tag vX.Y.Z, ponha aqui, no TOPO da lista, uma entrada com versao igual a X.Y.Z. tipo: novo, melhorado ou corrigido. Escreva para quem usa o app, em frases curtas e sem termos tecnicos. data no formato AAAA-MM-DD (opcional).",
   "versoes": [
     {
+      "versao": "1.0.35",
+      "data": "2026-11-07",
+      "itens": [
+        {
+          "tipo": "melhorado",
+          "texto": "Mais segurança: a janela do FST Beta não vai mais sozinha para outro site, nem por link nem por redirecionamento. Os links do chat continuam abrindo no seu navegador."
+        }
+      ]
+    },
+    {
       "versao": "1.0.34",
       "data": "2026-11-07",
       "itens": [

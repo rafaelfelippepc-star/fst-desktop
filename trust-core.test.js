@@ -1,6 +1,6 @@
 // Teste de em quais endereços o app confia. Rode com:  node trust-core.test.js
 const assert = require('node:assert/strict');
-const { createTrust, isTunnelUrl, isLoopbackUrl, originOf, permissionAllowed } = require('./trust-core');
+const { createTrust, isTunnelUrl, isLoopbackUrl, originOf, permissionAllowed, navigationAllowed } = require('./trust-core');
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -144,6 +144,34 @@ test('permissões: o localhost do host funciona (microfone e tela)', () => {
   const { t } = make();
   assert.ok(permissionAllowed(t, 'media', 'http://localhost:3000/', 'http://localhost:3000/'));
   assert.ok(permissionAllowed(t, 'display-capture', 'http://localhost:3000/', 'http://localhost:3000/'));
+});
+
+test('navegação: dentro do mesmo endereço pode (outra rota, query, #), e recarregar a mesma página também', () => {
+  assert.ok(navigationAllowed(GIST + '/', GIST + '/outra?x=1'));
+  assert.ok(navigationAllowed(GIST + '/?sala=a', GIST + '/#chat'));
+  assert.ok(navigationAllowed('https://ALPHA-beta.trycloudflare.com/', GIST + '/x'), 'maiúsculas no nome do site');
+  assert.ok(navigationAllowed('http://localhost:3000/', 'http://localhost:3000/api'));
+  assert.ok(navigationAllowed('file:///C:/app/connect.html', 'file:///C:/app/connect.html'), 'recarregar a tela do app');
+  assert.ok(navigationAllowed('file:///C:/app/connect.html', 'file:///C:/app/connect.html#x'));
+});
+
+test('navegação: outro site, outra porta, outro protocolo ou subdomínio NÃO pode', () => {
+  for (const bad of [OTHER + '/', 'https://evil.com/', 'https://alpha-beta.trycloudflare.com.evil.com/', 'https://alpha-beta.trycloudflare.com:8443/', 'http://alpha-beta.trycloudflare.com/',
+    'https://x.alpha-beta.trycloudflare.com/', 'https://alpha-beta.trycloudflare.com@evil.com/', 'https://user:pw@evil.com/']) {
+    assert.equal(navigationAllowed(GIST + '/', bad), false, bad);
+  }
+  assert.equal(navigationAllowed('http://localhost:3000/', 'http://localhost:3001/'), false);
+  assert.equal(navigationAllowed('http://localhost:3000/', 'http://127.0.0.1:3000/'), false, 'localhost e 127.0.0.1 são endereços diferentes');
+});
+
+test('navegação: páginas do app (file:) não vão sozinhas para lugar nenhum, e ninguém vai para file:/script/dados', () => {
+  assert.equal(navigationAllowed('file:///C:/app/connect.html', GIST + '/'), false);
+  assert.equal(navigationAllowed('file:///C:/app/connect.html', 'file:///C:/app/picker.html'), false);
+  for (const bad of ['file:///C:/Windows/win.ini', 'javascript:alert(1)', 'data:text/html,<b>x</b>', 'blob:' + GIST + '/uuid', 'about:blank', 'ftp://alpha-beta.trycloudflare.com/', '', null, undefined, 'lixo']) {
+    assert.equal(navigationAllowed(GIST + '/', bad), false, String(bad));
+  }
+  assert.equal(navigationAllowed('', GIST + '/'), false, 'sem página aberta ainda');
+  assert.equal(navigationAllowed(null, null), false);
 });
 
 test('originOf: só web', () => {
