@@ -1,0 +1,13 @@
+{
+  "_ajuda": "ANTES de criar a tag vX.Y.Z, ponha aqui, no TOPO da lista, uma entrada com versao igual a X.Y.Z. tipo: novo, melhorado ou corrigido. Escreva para quem usa o app, em frases curtas e sem termos tecnicos. data no formato AAAA-MM-DD (opcional).",
+  "versoes": [
+    {
+      "versao": "1.0.33",
+      "data": "2026-11-07",
+      "itens": [
+        { "tipo": "novo", "texto": "Novidades dentro do app: depois de atualizar, o FST Beta mostra o que mudou. Para rever quando quiser, use Menu > Novidades (o que mudou)." },
+        { "tipo": "melhorado", "texto": "O registro das atualizações agora abre dentro do app, na aba Registro técnico, em vez de abrir o Bloco de Notas. Se uma atualização falhar, é só clicar em Copiar e mandar para quem hospeda." }
+      ]
+    }
+  ]
+}

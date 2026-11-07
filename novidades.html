@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Novidades do FST Beta</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;display:flex;flex-direction:column;background:#0f1014;color:#e8e9ee;font-family:system-ui,'Segoe UI',sans-serif}
+  header{padding:18px 22px 0}
+  h1{margin:0;font-size:20px}
+  .sub{margin:4px 0 12px;min-height:18px;color:#9a9cab;font-size:13px}
+  .tabs{display:flex;gap:6px;border-bottom:1px solid #2a2c38}
+  .tab{padding:9px 14px;border:0;background:none;color:#9a9cab;font:inherit;font-size:14px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent}
+  .tab:hover{color:#e8e9ee}
+  .tab.on{color:#fff;border-bottom-color:#5865f2}
+  main{flex:1;overflow:auto;padding:16px 22px}
+  main[hidden]{display:none}
+  .banner{margin-bottom:14px;padding:12px 14px;border:1px solid #5865f2;border-left-width:4px;border-radius:10px;background:#1c1d2b;font-size:14px;line-height:1.5}
+  .card{margin-bottom:12px;padding:14px 16px;border:1px solid #2a2c38;border-radius:12px;background:#1a1b22}
+  .card.new{border-color:#5865f2}
+  .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .card-head h2{margin:0;font-size:16px}
+  .date{margin-left:auto;color:#9a9cab;font-size:12px}
+  .chip{padding:2px 8px;border-radius:999px;background:#2a2c38;color:#c9cad6;font-size:11px;font-weight:700}
+  .chip.new{background:#5865f2;color:#fff}
+  .item{display:flex;align-items:flex-start;gap:10px;padding:5px 0;font-size:14px;line-height:1.45}
+  .txt{min-width:0;overflow-wrap:anywhere}
+  .pill{flex:none;width:88px;padding:2px 0;border-radius:999px;text-align:center;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+  .pill.new{background:rgba(35,165,90,.18);color:#4fd48a}
+  .pill.imp{background:rgba(88,101,242,.2);color:#9aa5ff}
+  .pill.fix{background:rgba(240,178,50,.18);color:#f0b232}
+  .muted{margin:0 0 12px;color:#9a9cab;font-size:13px;line-height:1.5}
+  .row{display:flex;gap:8px;margin:0 0 10px}
+  pre{margin:0;padding:12px;border:1px solid #2a2c38;border-radius:10px;background:#0b0c0e;color:#d7d8e0;font:12px/1.5 Consolas,'Cascadia Mono',monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+  footer{display:flex;justify-content:flex-end;padding:12px 22px;border-top:1px solid #2a2c38}
+  button.b{padding:8px 16px;border:0;border-radius:8px;background:#2a2c38;color:#e8e9ee;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  button.b:hover{background:#34364a}
+  button.b.ok{background:#5865f2;color:#fff}
+  button.b.ok:hover{background:#6672f5}
+  .more{display:block;margin:4px auto 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Novidades do FST Beta</h1>
+  <div class="sub" id="sub"></div>
+  <div class="tabs">
+    <button class="tab on" data-tab="news" type="button">O que mudou</button>
+    <button class="tab" data-tab="log" type="button">Registro técnico</button>
+  </div>
+</header>
+
+<main id="news"></main>
+
+<main id="log" hidden>
+  <p class="muted">Detalhes técnicos das atualizações do app. Você só precisa disto se alguma atualização der problema: clique em <b>Copiar</b> e mande para quem hospeda o servidor.</p>
+  <div class="row">
+    <button class="b" id="copy" type="button">Copiar</button>
+    <button class="b" id="refresh" type="button">Atualizar</button>
+  </div>
+  <pre id="logText"></pre>
+</main>
+
+<footer>
+  <button class="b ok" id="close" type="button">Fechar</button>
+</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const TIPOS = { novo: ['Novo', 'new'], melhorado: ['Melhorado', 'imp'], corrigido: ['Corrigido', 'fix'] };
+  const ORDEM = ['novo', 'melhorado', 'corrigido'];
+  const SHOW_FIRST = 5;
+  let data = { current: '', entries: [], unseen: [] };
+  let showAll = false;
+  let logLoaded = false;
+
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+
+  function fmtDate(d) {
+    if (!d) return '';
+    const t = new Date(d + 'T12:00:00');
+    return isNaN(t) ? '' : t.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function card(e) {
+    const isNew = data.unseen.includes(e.version);
+    const c = el('section', 'card' + (isNew ? ' new' : ''));
+    const head = el('div', 'card-head');
+    head.append(el('h2', '', 'Versão ' + e.version));
+    if (isNew) head.append(el('span', 'chip new', 'Novo'));
+    if (e.version === data.current) head.append(el('span', 'chip', 'Sua versão'));
+    const d = fmtDate(e.date);
+    if (d) head.append(el('span', 'date', d));
+    c.append(head);
+    for (const tipo of ORDEM) {
+      for (const it of e.itens.filter((i) => i.tipo === tipo)) {
+        const row = el('div', 'item');
+        row.append(el('span', 'pill ' + TIPOS[tipo][1], TIPOS[tipo][0]), el('span', 'txt', it.texto));
+        c.append(row);
+      }
+    }
+    return c;
+  }
+
+  function renderNews() {
+    const box = $('news');
+    box.textContent = '';
+    $('sub').textContent = data.current ? 'Você está na versão ' + data.current + '.' : '';
+    if (data.unseen.length) {
+      box.append(el('div', 'banner', 'O FST Beta foi atualizado para a versão ' + data.current + '. Veja o que mudou:'));
+    }
+    if (!data.entries.length) {
+      box.append(el('p', 'muted', 'Ainda não há novidades registradas.'));
+      return;
+    }
+    if (!data.entries.some((e) => e.version === data.current)) {
+      box.append(el('p', 'muted', 'A versão ' + data.current + ' não tem notas de novidades. Abaixo estão as versões anteriores.'));
+    }
+    const list = showAll ? data.entries : data.entries.slice(0, SHOW_FIRST);
+    for (const e of list) box.append(card(e));
+    if (data.entries.length > list.length) {
+      const more = el('button', 'b more', 'Mostrar versões anteriores (' + (data.entries.length - list.length) + ')');
+      more.type = 'button';
+      more.addEventListener('click', () => { showAll = true; renderNews(); });
+      box.append(more);
+    }
+  }
+
+  function loadLog() {
+    window.news.log().then((t) => {
+      $('logText').textContent = t || '(ainda sem registros)';
+      $('log').scrollTop = $('log').scrollHeight; // o mais recente fica no fim
+      logLoaded = true;
+    }).catch(() => { $('logText').textContent = 'Não consegui ler o registro.'; });
+  }
+
+  function setTab(name) {
+    const tab = name === 'log' ? 'log' : 'news';
+    for (const t of document.querySelectorAll('.tab')) t.classList.toggle('on', t.dataset.tab === tab);
+    $('news').hidden = tab !== 'news';
+    $('log').hidden = tab !== 'log';
+    if (tab === 'log') loadLog();
+  }
+
+  for (const t of document.querySelectorAll('.tab')) t.addEventListener('click', () => setTab(t.dataset.tab));
+  $('refresh').addEventListener('click', loadLog);
+  $('copy').addEventListener('click', () => {
+    window.news.copy($('logText').textContent);
+    const b = $('copy');
+    b.textContent = 'Copiado!';
+    setTimeout(() => { b.textContent = 'Copiar'; }, 1500);
+  });
+  $('close').addEventListener('click', () => window.news.close());
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') window.news.close(); });
+
+  window.news.get().then((d) => {
+    data = { current: String(d.current || ''), entries: d.entries || [], unseen: d.unseen || [] };
+    renderNews();
+  }).catch(() => {
+    $('news').append(el('p', 'muted', 'Não consegui carregar as novidades.'));
+  });
+  setTab(new URLSearchParams(location.search).get('tab'));
+</script>
+</body>
+</html>

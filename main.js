@@ -1,7 +1,8 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage, net } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, desktopCapturer, powerMonitor, dialog, shell, safeStorage, net, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createPttCore } = require('./ptt-core');
+const { cleanNews, pickUnseen, tailText, parseVer, cmpVer } = require('./news-core');
 
 // Atualização automática pelo GitHub (só no app instalado, não no "npm start").
 let autoUpdater = null;
@@ -386,6 +387,77 @@ ipcMain.handle('app:update-check', async (_e, opts) => {
 // botão "Reiniciar e instalar" da barra de cima da página
 ipcMain.on('app:update-install', () => { if (updateReady) installUpdate(); });
 
+/* ---------- novidades: o que mudou em cada versão (janela própria, não o Bloco de Notas) ---------- */
+
+// As notas vêm do novidades.json (vai dentro do instalador). Depois de atualizar, a janela abre sozinha com o que é
+// novo para a pessoa; no menu, "Novidades" abre quando quiser e "Ver registro das atualizações" abre a aba técnica.
+const NEWS_DELAY_MS = 6000; // espera o app terminar de abrir antes de mostrar a janela
+const seenFile = () => path.join(app.getPath('userData'), 'news-seen.json');
+const readSeen = () => {
+  try {
+    const v = JSON.parse(fs.readFileSync(seenFile(), 'utf8')).version;
+    return parseVer(v) ? String(v) : '';
+  } catch { return ''; }
+};
+const writeSeen = (v) => { try { fs.writeFileSync(seenFile(), JSON.stringify({ version: v })); } catch {} };
+const loadNews = () => {
+  try { return cleanNews(JSON.parse(fs.readFileSync(path.join(__dirname, 'novidades.json'), 'utf8'))); } catch (e) {
+    console.warn('novidades.json:', e && e.message ? e.message : e);
+    return [];
+  }
+};
+let newsUnseen = []; // versões novas desde a última vez que a pessoa abriu o app (só para destacar com "Novo")
+let newsWin = null;
+
+function openNews(tab) {
+  const query = { tab: tab === 'log' ? 'log' : 'news' };
+  const page = path.join(__dirname, 'novidades.html');
+  if (newsWin && !newsWin.isDestroyed()) {
+    newsWin.loadFile(page, { query });
+    if (newsWin.isMinimized()) newsWin.restore();
+    newsWin.show();
+    newsWin.focus();
+    return;
+  }
+  newsWin = new BrowserWindow({
+    width: 680, height: 640, minWidth: 460, minHeight: 420, show: false,
+    title: 'Novidades do FST Beta', backgroundColor: '#0f1014',
+    icon: path.join(__dirname, 'icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'novidades-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  newsWin.removeMenu();
+  newsWin.once('ready-to-show', () => newsWin && !newsWin.isDestroyed() && newsWin.show());
+  newsWin.on('closed', () => { newsWin = null; });
+  newsWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  newsWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  newsWin.loadFile(page, { query });
+}
+
+// Roda uma vez, antes de a janela principal abrir (e antes de qualquer escrita no registro das atualizações).
+function initNews() {
+  // Quem já usava o app antes das Novidades existirem não tem "última versão vista": vê só a atual.
+  // Instalação nova (nenhum arquivo do app ainda) começa do zero e não recebe a janela.
+  const wasUsed = [cfgFile(), sessFile(), updLogFile()].some((f) => { try { return fs.existsSync(f); } catch { return false; } });
+  const current = app.getVersion();
+  const seen = readSeen();
+  if (seen || wasUsed) newsUnseen = pickUnseen(loadNews(), seen, current).map((e) => e.version);
+  writeSeen(current);
+  if (newsUnseen.length && app.isPackaged) setTimeout(() => openNews('news'), NEWS_DELAY_MS);
+}
+
+ipcMain.handle('news:get', () => {
+  const current = app.getVersion();
+  const all = loadNews();
+  // no app instalado, nunca mostra versão que a pessoa ainda não tem (sem spoiler); em teste (npm start) mostra tudo
+  const entries = app.isPackaged ? all.filter((e) => cmpVer(e.version, current) <= 0) : all;
+  return { current, entries, unseen: newsUnseen };
+});
+ipcMain.handle('news:log', () => {
+  try { return tailText(fs.readFileSync(updLogFile(), 'utf8')); } catch { return ''; }
+});
+ipcMain.on('news:copy', (_e, text) => { try { clipboard.writeText(String(text || '').slice(0, 200000)); } catch {} });
+ipcMain.on('news:close', () => { if (newsWin && !newsWin.isDestroyed()) newsWin.close(); });
+
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -393,13 +465,8 @@ function buildMenu() {
       submenu: [
         { label: `FST Beta versão ${app.getVersion()}${updateReady ? ' (atualização pronta, reinicie)' : ''}`, enabled: false },
         { label: 'Procurar atualizações', click: manualCheck },
-        {
-          label: 'Ver registro das atualizações',
-          click: () => {
-            try { if (!fs.existsSync(updLogFile())) fs.writeFileSync(updLogFile(), '(ainda sem registros)\n'); } catch {}
-            shell.openPath(updLogFile());
-          },
-        },
+        { label: 'Novidades (o que mudou)', click: () => openNews('news') },
+        { label: 'Ver registro das atualizações', click: () => openNews('log') }, // o texto "Ver registro das atualizações" aparece num aviso da página: não mude
         { type: 'separator' },
         { label: 'Trocar servidor…', click: () => win.loadFile(path.join(__dirname, 'connect.html')) },
         {
@@ -491,6 +558,9 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+
+  // Fechar a janela principal de verdade fecha também a de Novidades (senão ela segurava o app aberto).
+  win.on('closed', () => { if (newsWin && !newsWin.isDestroyed()) newsWin.close(); });
 
   // Com a bandeja ligada, o X só esconde a janela (a chamada e o push to talk continuam funcionando).
   win.on('close', (e) => {
@@ -620,6 +690,7 @@ function setupScreenShare() {
 app.on('second-instance', () => showWin()); // abrir o FST de novo traz de volta a janela escondida na bandeja
 
 app.whenReady().then(() => {
+  initNews();
   overlayLayout = readOverlayLayout();
   trayOn = readTray();
   loadSavedSession();
