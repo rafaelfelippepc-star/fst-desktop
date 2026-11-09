@@ -5,6 +5,8 @@ const { fileURLToPath } = require('url');
 const { createPttCore } = require('./ptt-core');
 const { createTrust, isTunnelUrl, permissionAllowed, navigationAllowed, originOf } = require('./trust-core');
 const { cleanNews, pickUnseen, tailText, parseVer, cmpVer } = require('./news-core');
+const { verifyLink } = require('./link-sign');
+const { checkExternalUrl } = require('./extlink-core');
 
 // Atualização automática pelo GitHub (só no app instalado, não no "npm start").
 let autoUpdater = null;
@@ -45,6 +47,11 @@ const defaultServer = () => {
     return /^https?:\/\//i.test(u) ? u : '';
   } catch { return ''; }
 };
+
+// Ferramentas do desenvolvedor (F12): só em desenvolvimento (npm start). No app instalado ficam desligadas, porque com elas
+// abertas na janela principal alguém enganado a colar um código teria acesso à ponte resenhaDesktop (push to talk, login...).
+// Para diagnosticar no app instalado, abra-o com a variável de ambiente FST_DEVTOOLS=1.
+const devtoolsOk = !app.isPackaged || process.env.FST_DEVTOOLS === '1';
 
 let win;
 let quitting = false; // o app está mesmo saindo (e não só escondendo a janela na bandeja)
@@ -243,6 +250,16 @@ const defaultGist = () => {
     return /^[0-9a-f]{20,40}$/i.test(g) ? g : '';
   } catch { return ''; }
 };
+// Chave pública que confere a assinatura do gist (server-default.json, campo "pubkey"). Sem ela o app aceita o gist como
+// antes (modo antigo); COM ela, só vale link assinado pelo host.
+const defaultPubKey = () => {
+  try { return String(JSON.parse(fs.readFileSync(path.join(__dirname, 'server-default.json'), 'utf8')).pubkey || '').trim(); } catch { return ''; }
+};
+// O "updated" mais novo que o app já aceitou: um link antigo (também assinado) reposto no gist não vale.
+const linkSeenFile = () => path.join(app.getPath('userData'), 'link-seen.json');
+const readLinkSeen = () => { try { const n = Number(JSON.parse(fs.readFileSync(linkSeenFile(), 'utf8')).updatedMs); return Number.isFinite(n) && n > 0 ? n : 0; } catch { return 0; } };
+const writeLinkSeen = (ms) => { try { fs.writeFileSync(linkSeenFile(), JSON.stringify({ updatedMs: ms })); } catch {} };
+let warnedUnsigned = false;
 const sameHost = (a, b) => { try { return new URL(a).host === new URL(b).host; } catch { return false; } };
 let gistEtag = '';
 let gistLast = ''; // último link válido lido do gist (devolvido quando o GitHub responde 304)
@@ -262,9 +279,21 @@ async function discoverServer() {
     if (res.status === 304) return gistLast;
     if (!res.ok) throw new Error('o GitHub respondeu ' + res.status);
     const data = await res.json();
-    const url = String(JSON.parse(data.files[GIST_FILE].content).url || '').trim().replace(/\/+$/, '');
+    const content = JSON.parse(data.files[GIST_FILE].content);
+    const pub = defaultPubKey();
+    let url;
+    if (pub) {
+      // com chave pública no app: só vale link ASSINADO pelo host e não mais antigo que o já aceito
+      const v = verifyLink(pub, content, { lastMs: readLinkSeen() });
+      if (!v.ok) throw new Error('gist recusado: ' + v.reason);
+      url = v.url;
+      if (v.updatedMs > readLinkSeen()) writeLinkSeen(v.updatedMs);
+    } else {
+      url = String((content && content.url) || '').trim().replace(/\/+$/, '');
+      if (!warnedUnsigned) { warnedUnsigned = true; updLog('aviso: este app não tem chave pública (server-default.json sem "pubkey"): o link do gist não é conferido'); }
+    }
     if (!isTunnelUrl(url)) throw new Error('o gist não tem um link de túnel válido');
-    trust.trustGist(url); // veio do GitHub: este é o link do servidor
+    trust.trustGist(url); // veio do GitHub e (com chave) com a assinatura do host: este é o link do servidor
     gistEtag = res.headers.get('etag') || '';
     gistLast = url;
     return url;
@@ -536,7 +565,7 @@ function buildMenu() {
           ],
         },
         { label: 'Recarregar', accelerator: 'CmdOrCtrl+R', click: () => win.reload() },
-        { label: 'Ferramentas do desenvolvedor', accelerator: 'F12', click: () => win.webContents.toggleDevTools() },
+        ...(devtoolsOk ? [{ label: 'Ferramentas do desenvolvedor', accelerator: 'F12', click: () => win.webContents.toggleDevTools() }] : []),
         { role: 'quit', label: 'Sair' },
       ],
     },
@@ -631,6 +660,36 @@ function guardNavigation(wc) {
 // Nenhuma janela do app aceita <webview> (nem a página do servidor): seria outro jeito de embutir um site.
 app.on('web-contents-created', (_e, contents) => contents.on('will-attach-webview', (ev) => ev.preventDefault()));
 
+// Links clicados no chat: antes de abrir no navegador do computador, mostra o endereço completo e pergunta. Uma pergunta
+// por vez e no máximo uma a cada 1,5 s, para uma página não encher a tela de avisos. Só http e https; endereço com
+// usuário e senha (https://banco.com@evil.com) nem pergunta. A conferência fica em extlink-core.js (com testes).
+let linkAsking = false;
+let lastLinkAt = 0;
+async function confirmOpenExternal(rawUrl) {
+  const c = checkExternalUrl(rawUrl);
+  if (!c.ok) { updLog('link externo bloqueado (' + c.reason + ')'); return; }
+  if (linkAsking || Date.now() - lastLinkAt < 1500) return;
+  linkAsking = true;
+  try {
+    const notes = [];
+    if (c.insecure) notes.push('Este link não usa HTTPS: a conexão não é protegida.');
+    if (c.idn) notes.push('Atenção: o nome do site tem caracteres especiais (' + c.unicodeHost + ') e pode estar imitando outro site.');
+    const opts = {
+      type: 'question', buttons: ['Abrir no navegador', 'Cancelar'], defaultId: 1, cancelId: 1, title: 'FST Beta',
+      message: 'Abrir este link no navegador? (site: ' + c.hostname + ')',
+      detail: c.shown + (notes.length ? '\n\n' + notes.join('\n') : ''),
+    };
+    const w = visibleWin();
+    const r = w ? await dialog.showMessageBox(w, opts) : await dialog.showMessageBox(opts);
+    if (r.response === 0) await shell.openExternal(c.href);
+  } catch (e) {
+    updLog('link externo: ' + (e && e.message ? e.message : e));
+  } finally {
+    linkAsking = false;
+    lastLinkAt = Date.now();
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -647,6 +706,8 @@ function createWindow() {
   });
 
   guardNavigation(win.webContents);
+  // mesmo que abram as ferramentas do desenvolvedor por outro caminho, no app instalado elas fecham
+  win.webContents.on('devtools-opened', () => { if (!devtoolsOk && win && !win.isDestroyed()) win.webContents.closeDevTools(); });
 
   // Fechar a janela principal de verdade fecha também a de Novidades (senão ela segurava o app aberto).
   win.on('closed', () => { if (newsWin && !newsWin.isDestroyed()) newsWin.close(); });
@@ -661,7 +722,7 @@ function createWindow() {
 
   // Links clicados no chat abrem no navegador do computador (e não numa janela nova do FST).
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    confirmOpenExternal(url).catch(() => {});
     return { action: 'deny' };
   });
 
