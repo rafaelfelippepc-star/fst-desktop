@@ -641,6 +641,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true, // o preload só usa contextBridge/ipcRenderer, que funcionam no sandbox
       backgroundThrottling: false,
     },
   });
@@ -744,7 +745,7 @@ function askWhatToShare() {
       width: 780, height: 580, minWidth: 560, minHeight: 420,
       parent: win, modal: true, show: false,
       title: 'Compartilhar tela', backgroundColor: '#0f1014',
-      webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, nodeIntegration: false },
+      webPreferences: { preload: path.join(__dirname, 'picker-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     pickerWin.removeMenu();
     pickerWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

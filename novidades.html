@@ -113,14 +113,17 @@
     const box = $('news');
     box.textContent = '';
     $('sub').textContent = data.current ? 'Você está na versão ' + data.current + '.' : '';
+    const hasCurrent = data.entries.some((e) => e.version === data.current);
     if (data.unseen.length) {
-      box.append(el('div', 'banner', 'O FST Beta foi atualizado para a versão ' + data.current + '. Veja o que mudou:'));
+      box.append(el('div', 'banner', hasCurrent
+        ? 'O FST Beta foi atualizado para a versão ' + data.current + '. Veja o que mudou:'
+        : 'O FST Beta foi atualizado para a versão ' + data.current + ', mas ela não trouxe notas. Abaixo está o que você ainda não tinha visto, de versões anteriores.'));
     }
     if (!data.entries.length) {
       box.append(el('p', 'muted', 'Ainda não há novidades registradas.'));
       return;
     }
-    if (!data.entries.some((e) => e.version === data.current)) {
+    if (!hasCurrent && !data.unseen.length) {
       box.append(el('p', 'muted', 'A versão ' + data.current + ' não tem notas de novidades. Abaixo estão as versões anteriores.'));
     }
     const list = showAll ? data.entries : data.entries.slice(0, SHOW_FIRST);

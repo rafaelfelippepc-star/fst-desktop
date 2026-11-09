@@ -18,6 +18,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Conferir se há notas de novidades para esta versão (barra a publicação se faltar)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#[vV]}"
+          VERSION="${VERSION#.}"
+          node check-news.js "$VERSION"
       - run: npm install
       - run: npm test
       - name: Usar o número da tag como versão do app
@@ -27,12 +33,6 @@ jobs:
           VERSION="${VERSION#.}"
           echo "Versão do app: $VERSION"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-      - name: Conferir se há notas de novidades para esta versão (só avisa)
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#[vV]}"
-          VERSION="${VERSION#.}"
-          node check-news.js "$VERSION"
       - name: Gerar o instalador (só gera, não publica)
         shell: bash
         run: |

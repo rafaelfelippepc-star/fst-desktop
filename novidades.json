@@ -1,6 +1,26 @@
 {
-  "_ajuda": "ANTES de criar a tag vX.Y.Z, ponha aqui, no TOPO da lista, uma entrada com versao igual a X.Y.Z. tipo: novo, melhorado ou corrigido. Escreva para quem usa o app, em frases curtas e sem termos tecnicos. data no formato AAAA-MM-DD (opcional).",
+  "_ajuda": "ANTES de criar a tag vX.Y.Z (sem isso a publicação é BARRADA), ponha aqui, no TOPO da lista, uma entrada com versao igual a X.Y.Z. tipo: novo, melhorado ou corrigido. Escreva para quem usa o app, em frases curtas e sem termos tecnicos. data no formato AAAA-MM-DD (opcional).",
   "versoes": [
+    {
+      "versao": "1.0.37",
+      "data": "2026-11-08",
+      "itens": [
+        {
+          "tipo": "corrigido",
+          "texto": "A janela de Novidades agora mostra o que mudou na versão que você acabou de instalar, e não mais as notas da versão anterior."
+        }
+      ]
+    },
+    {
+      "versao": "1.0.36",
+      "data": "2026-11-08",
+      "itens": [
+        {
+          "tipo": "melhorado",
+          "texto": "Mais segurança: a janela do FST Beta e as telas de trocar servidor e de compartilhar tela agora rodam isoladas do sistema, com proteção extra contra conteúdo indevido."
+        }
+      ]
+    },
     {
       "versao": "1.0.35",
       "data": "2026-11-07",
