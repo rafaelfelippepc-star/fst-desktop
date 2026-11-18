@@ -14,6 +14,7 @@
     "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.5",
     "electron": "^38.0.0",
     "electron-builder": "^26.0.0"
   },
@@ -21,13 +22,35 @@
     "appId": "com.fst.desktop",
     "productName": "FST Beta",
     "npmRebuild": false,
-    "directories": { "output": "dist" },
-    "files": ["**/*", "!dist/**", "!.github/**", "!*.md", "!*.test.js"],
-    "asarUnpack": ["node_modules/uiohook-napi/**"],
-    "win": { "target": "nsis", "icon": "build/icon.ico" },
-    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "FST-Beta-Setup-${version}.${ext}" },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!.github/**",
+      "!*.md",
+      "!*.test.js"
+    ],
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "FST-Beta-Setup-${version}.${ext}"
+    },
     "publish": [
-      { "provider": "github", "owner": "rafaelfelippepc-star", "repo": "fst-desktop", "releaseType": "release" }
+      {
+        "provider": "github",
+        "owner": "rafaelfelippepc-star",
+        "repo": "fst-desktop",
+        "releaseType": "release"
+      }
     ]
   }
 }
