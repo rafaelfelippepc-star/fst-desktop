@@ -4,8 +4,8 @@
   "version": "1.0.38",
   "identifier": "com.fst.desktop",
   "build": {
-  "frontendDist": "../build"
-},
+    "frontendDist": "../build"
+  },
   "app": {
     "windows": [
       {
